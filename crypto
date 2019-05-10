@@ -1,0 +1,793 @@
+#!/usr/bin/perl
+use strict;
+use bignum;
+use Getopt::Std;
+use Math::Random::Secure qw(irand);
+use Time::HiRes qw(time);
+use Digest::SHA qw(sha256);
+
+Math::BigInt->accuracy(undef);
+my $rabin_shift = 8;
+my $seeded;
+my $saved;
+my %opt;
+$|=1;
+
+# -----------------------------------------------------------------
+sub usage {
+    my ($cmd) = @_;
+    print "usage: ";
+    print "crypto [-x] [-r] [-l#] [command args...]\n",
+          "  -x = print hex\n",
+          "  -r = raw Rabin (no disambiguator) or original RSA-gen\n",
+          "  -l = loops in Miller-Rabin\n",
+          "commands (values in {} may be '-' if preceded by *-gen):\n" if not $cmd;
+    print "  bbs BITS SEED BYTES\n" if not $cmd or $cmd eq 'bbs';
+    print "  euclid NUM1 NUM2\n" if not $cmd or $cmd eq 'euclid';
+    print "  exp BASE EXP MOD\n" if not $cmd or $cmd eq 'exp';
+    print "  find-prime BITS\n" if not $cmd or $cmd eq 'fin';
+    print "  gcd NUM1 NUM2\n" if not $cmd or $cmd eq 'gcd';
+    print "  inv NUM MOD\n" if not $cmd or $cmd eq 'inv';
+    print "  is-prime NUM\n" if not $cmd or $cmd eq 'is-prime';
+    print "  kx BITS\n" if not $cmd or $cmd eq 'kx';
+    print "  lcm NUM1 NUM2\n" if not $cmd or $cmd eq 'lcm';
+    print "  luhn CCN\n" if not $cmd or $cmd eq 'luhn';
+    print "  random MIN MAX\n" if not $cmd or $cmd eq 'random';
+    print "  shuffle NUM\n" if not $cmd or $cmd eq 'shuffle';
+    print "  verhoeff[-gen] CCN\n" if not $cmd or $cmd eq 'verhoeff';
+    print "  rsa-gen BITS\n" if not $cmd or $cmd eq 'rsa-gen';
+    print "  rsa-encrypt {N E} MSG\n" if not $cmd or $cmd eq 'rsa-encrypt';
+    print "  rsa-decrypt {N D} MSG\n" if not $cmd or $cmd eq 'rsa-decrypt';
+    print "  eg-gen BITS\n" if not $cmd or $cmd eq 'eg-gen';
+    print "  eg-sign    {P G X} MSG\n" if not $cmd or $cmd eq 'eg-sign   ';
+    print "  eg-verify  {P G Y} R S MSG\n" if not $cmd or $cmd eq 'eg-verify ';
+    print "  eg-encrypt {P G Y} MSG\n" if not $cmd or $cmd eq 'eg-encrypt';
+    print "  eg-decrypt {P G X} R S\n" if not $cmd or $cmd eq 'eg-decrypt';
+    print "  rabin-gen BITS\n" if not $cmd or $cmd eq 'rabin-gen';
+    print "  rabin-encrypt {N} MSG\n" if not $cmd or $cmd eq 'rabin-encrypt';
+    print "  rabin-decrypt {P Q N} MSG\n" if not $cmd or $cmd eq 'rabin-decrypt';
+    return 0;
+}
+
+# -----------------------------------------------------------------
+exit (main() ? 0 : 1);
+sub main {
+    return usage() if not getopts('ef:l:rx',\%opt);
+    return command(@ARGV) if @ARGV;
+    for (;;) {
+        print ">";
+        my $line = <>;
+        $line =~ s/^\s+//;
+        $line =~ s/\s$//;
+        next if $line eq '';
+        last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
+        my @args = split /\s+/, $line;
+        print "command failed\n" if not command(@args);
+    }
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub command {
+    my $cmd = shift @_;
+    if (0) {
+    } elsif ($cmd eq 'bbs') {
+        my ($bits, $seed, $bytes) = args(\@_);
+        return usage($cmd) if not $bytes;
+        my $data = bbs($bits, $seed, $bytes);
+        if (not $data) {
+            print "bbs failed\n";
+            return 0;
+        } else {
+            for (my $i = 0; $i < length $data; ++$i) {
+                printf "%02x ", ord substr($data,$i,1);
+            }
+            print "\n";
+        }
+    } elsif ($cmd eq 'euclid') {
+        my ($u, $v) = args(\@_);
+        return usage($cmd) if not defined $v;
+        if ($u < $v) { ($u,$v) = ($v,$u); }
+        my ($w,$x,$a,$b,$gcd,$k) = euclid($u, $v);
+        my $ngcd = number($gcd);
+        print $ngcd, ' = ', number($a), ' * ', number($w), ' - ', number($b), ' * ', number($x), "\n";
+        print (' ' x length($ngcd));
+        print ' = (', number($a), '>>', number($k), ') * ', number($u), ' - (', number($b), '>>', number($k), ') * ', number($v), "\n";
+        if ($gcd == 1) {
+            print number($x), '^-1 mod ', number($w), ' = ', number($w-$b), "\n";
+        }
+    } elsif ($cmd eq 'exp') {
+        my ($base, $exp, $mod) = args(\@_);
+        return usage($cmd) if not $mod;
+        my $n = pow_mod($base, $exp, $mod);
+        print number($n), "\n";
+    } elsif ($cmd eq 'find-prime') {
+        my ($bits) = args(\@_);
+        return usage($cmd) if not $bits;
+        my $n = find_prime($bits);
+        print number($n), "\n";
+    } elsif ($cmd eq 'is-prime') {
+        my ($num) = args(\@_);
+        return usage($cmd) if not $num;
+        print is_prime($num) ? "probably prime\n" : "composite\n";
+    } elsif ($cmd eq 'gcd') {
+        my ($u, $v) = args(\@_);
+        return usage($cmd) if not defined $v;
+        my $gcd = gcd($u, $v);
+        print number($gcd), "\n";
+    } elsif ($cmd eq 'inv') {
+        my ($num, $mod) = args(\@_);
+        return usage($cmd) if not defined $mod;
+        my $inv = inv($num, $mod);
+        print number($inv), "\n";
+    } elsif ($cmd eq 'lcm') {
+        my ($u, $v) = args(\@_);
+        return usage($cmd) if not defined $v;
+        my $lcm = lcm($u, $v);
+        print number($lcm), "\n";
+    } elsif ($cmd eq 'luhn') {
+        my ($ccn) = args(\@_);
+        return usage($cmd) if not defined $ccn;
+        my $ok = luhn($ccn);
+        print (($ok ? "ok" : "INVALID"), "\n");
+        return 0 if not $ok;
+    } elsif ($cmd eq 'random') {
+        my ($min, $max) = args(\@_);
+        return usage($cmd) if not $max;
+        my $n = random($min, $max);
+        print number($n), "\n";
+    } elsif ($cmd eq 'shuffle') {
+        my ($num) = args(\@_);
+        return usage($cmd) if not $num;
+        my @nums = 1 .. $num;
+        shuffle(\@nums);
+        print join(' ', @nums), "\n";
+
+    } elsif ($cmd eq 'rsa-gen') {
+        my ($bits) = args(\@_);
+        return usage($cmd) if not $bits;
+        my $rsa = rsa_gen($bits);
+        save_obj($rsa);
+        print_map($rsa, 'e','d','n');
+    } elsif ($cmd eq 'rsa-decrypt' or $cmd eq 'rsa-encrypt') {
+        my ($n,$e,$msg) = args(\@_, 'n', ($cmd eq 'rsa-decrypt') ? 'd' : 'e');
+        return usage($cmd) if not $n or not $e or not defined $msg;
+        my $num = rsa_crypt($msg, $e, $n);
+        print number($num), "\n";
+
+    } elsif ($cmd eq 'eg-gen') {
+        my ($bits) = args(\@_);
+        return usage($cmd) if not $bits;
+        my $eg = eg_gen($bits);
+        save_obj($eg);
+        print_map($eg, 'p','g','y','x');
+    } elsif ($cmd eq 'eg-sign') {
+        my ($p,$g,$x,$msg) = args(\@_, 'p','g','x');
+        return usage($cmd) if not $msg;
+        my $sig = eg_sign($p,$g,$x,$msg);
+        print number($$sig{r}), ' ', number($$sig{s}), "\n";
+    } elsif ($cmd eq 'eg-verify') {
+        my ($p,$g,$y,$r,$s,$msg) = args(\@_, 'p','g','y');
+        return usage($cmd) if not $s;
+        if (not eg_verify($p,$g,$y,$msg,$r,$s)) {
+            print "FAIL\n";
+            return 0;
+        }
+        print "ok\n";
+    } elsif ($cmd eq 'eg-encrypt') {
+        my ($p,$g,$y,$msg) = args(\@_, 'p','g','y');
+        return usage($cmd) if not $msg;
+        my $enc = eg_encrypt($p,$g,$y,$msg);
+        print number($$enc{r}), ' ', number($$enc{s}), "\n";
+    } elsif ($cmd eq 'eg-decrypt') {
+        my ($p,$g,$x,$r,$s) = args(\@_, 'p','g','x');
+        return usage($cmd) if not $s;
+        my $msg = eg_decrypt($p,$g,$x,$r,$s);
+        print number($msg), "\n";
+
+    } elsif ($cmd eq 'rabin-gen') {
+        my ($bits) = args(\@_);
+        return usage($cmd) if not $bits;
+        my $rabin = rabin_gen($bits);
+        save_obj($rabin);
+        print_map($rabin, 'p','q','n');
+    } elsif ($cmd eq 'rabin-encrypt') {
+        my ($n,$msg) = args(\@_);
+        if ($n eq '-') {
+            $n = $$saved{n};
+        }
+        return usage($cmd) if not $n or not defined $msg;
+        # Use N low order zero bits to distinguish between 4 posssible decryptions.
+        $msg = lshift($msg, $rabin_shift) if not $opt{r};
+        my $enc = rabin_encrypt($msg, $n);
+        print number($enc), "\n";
+    } elsif ($cmd eq 'rabin-decrypt') {
+        my ($p,$q,$n,$enc) = args(\@_, 'p','q','n');
+        return usage($cmd) if not $p or not $q or not defined $enc;
+        # Look for the correct decryption among the 4.
+        foreach my $m (rabin_decrypt($enc, $p, $q, $n)) {
+            if ($opt{r}) { # With -r just print them all.
+                print number($m), "\n";
+            } elsif (($m & rmask($rabin_shift)) == 0) {
+                # Found one with N low order zero bits.
+                # It might be the right decryption (or we might be unlucky).
+                print number(rshift($m, $rabin_shift)), "\n";
+            }
+        }
+
+    } elsif ($cmd eq 'kx') {
+        my ($bits) = args(\@_);
+        return usage($cmd) if not $bits;
+        dh_key_exchange($bits);
+    } elsif ($cmd =~ /^verhoeff/) {
+        my ($ccn) = args(\@_);
+        return usage('verhoeff') if not defined $ccn;
+        my $gen = ($cmd =~ /-gen/);
+        my $ch = verhoeff($ccn, $gen);
+        if (not defined $ch) {
+            print "INVALID\n";
+            return 0;
+        } elsif ($gen) {
+            print "$ch\n";
+        } elsif ($ch == 0) {
+            print "ok\n";
+        } else {
+            print "INVALID\n";
+            return 0;
+        }
+    } else {
+        return usage();
+    }
+    return 1;
+}
+
+# -----------------------------------------------------------------
+# ---- El Gamal # -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+# p,g,y public
+# x private
+sub eg_gen {
+    my ($bits) = @_;
+    my $p = find_prime($bits);
+    my $g = random(2, $p-1);
+    my $x = random(2, $p-1);
+    my $y = pow_mod($g, $x, $p);
+    my %eg = ( 'p' => $p, 'g' => $g, 'x' => $x, 'y' => $y );
+    return \%eg;
+}
+
+# -----------------------------------------------------------------
+sub eg_sign {
+    my ($p,$g,$x,$msg) = @_;
+    my $k = eg_k($p);
+    my $r = pow_mod($g, $k, $p);
+    my $ki = inv($k, $p-1);
+    my $s = xmod(($msg - $x * $r) * $ki, $p-1);
+    my %sig = ( 'r' => $r, 's' => $s );
+    return \%sig;
+}
+
+# -----------------------------------------------------------------
+sub xmod {
+    my ($n, $m) = @_;
+    return $n % $m if $n >= 0;
+    my $a = (int(-$n/$m)+2) * $m;
+    return ($n + $a) % $m;
+}
+
+# -----------------------------------------------------------------
+sub eg_verify {
+    my ($p,$g,$y,$msg,$r,$s) = @_;
+    my $c1 = mul_mod(pow_mod($y, $r, $p), pow_mod($r, $s, $p), $p);
+    my $c2 = pow_mod($g, $msg, $p);
+    return ($c1 == $c2);
+}
+
+# -----------------------------------------------------------------
+sub eg_encrypt {
+    my ($p,$g,$y,$msg) = @_;
+    my $k = eg_k($p);
+    my $r = pow_mod($g, $k, $p);
+    my $s = mul_mod(pow_mod($y, $k, $p), $msg, $p);
+    my %enc = ( 'r' => $r, 's' => $s );
+    return \%enc;
+} 
+
+# -----------------------------------------------------------------
+sub eg_decrypt {
+    my ($p,$g,$x,$r,$s) = @_;
+    my $h = pow_mod($r, $x, $p);
+    $h = inv($h, $p);
+    return undef if not defined $h;
+    my $msg = mul_mod($s, $h, $p);
+    return $msg;
+}
+
+# -----------------------------------------------------------------
+sub eg_k {
+    my ($p) = @_;
+    for (;;) {
+        my $k = random(2, $p-2);
+        return $k if gcd($k, $p-1) == 1;
+    }
+}
+
+# -----------------------------------------------------------------
+# ---- RSA
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub rsa_gen {
+    my ($bits) = @_;
+    my $bits2 = rshift($bits, 1); # bits/2 for p, and bits/2 for q
+    my $p = find_prime($bits2);
+    my $q = find_prime($bits2);
+    my $n = $p * $q;
+    my $n1 = $opt{r} ? ($p-1) * ($q-1) : lcm($p-1, $q-1);
+    my $e = rsa_exponent($bits, $n1);
+    my $d = inv($e, $n1);
+    die if $e >= $n or $d >= $n;
+    my %rsa = ( 'e' => $e, 'd' => $d, 'n' => $n);
+    return \%rsa;
+}
+
+# -----------------------------------------------------------------
+sub rsa_exponent {
+    my ($bits, $n1) = @_;
+    my $e = $opt{e} ? 0 : 65537;
+    for (;;) {
+        $e = random(2, $n1-1) | 1 if not $e;
+        return $e if gcd($e,$n1) == 1;
+        $e = 0;
+    } 
+}
+
+# -----------------------------------------------------------------
+sub rsa_crypt {
+    my ($msg, $e, $n) = @_;
+    return pow_mod($msg, $e, $n);
+}
+
+# -----------------------------------------------------------------
+# --- Rabin Encryption
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub rabin_gen {
+    my ($bits) = @_;
+    return undef if not $bits;
+    my $bits2 = rshift($bits, 1);
+    my $p = find_rabin_prime($bits2);
+    my $q = find_rabin_prime($bits2);
+    my %rabin = (
+        'p'  => $p,
+        'q'  => $q,
+        'n'  => $p*$q,
+    );
+    return \%rabin;
+}
+
+# -----------------------------------------------------------------
+sub find_rabin_prime {
+    my ($bits) = @_;
+    for (;;) {
+        my $p = find_prime($bits);
+        return $p if ($p % 4) == 3;
+    }
+}
+
+# -----------------------------------------------------------------
+sub rabin_encrypt {
+    my ($msg, $n) = @_;
+    return ($msg * $msg) % $n;
+}
+
+# -----------------------------------------------------------------
+# Returns four possible decryptions.
+sub rabin_decrypt {
+    my ($enc, $p, $q, $n) = @_;
+    # m1 = sqrt(enc) mod p. That is, (m1*m1 % p) == enc.
+    my $m1 = pow_mod($enc, rshift($p+1,2), $p);
+    # m2 = (-m1) mod p; thus m2 is also sqrt of enc.
+    my $m2 = $p - $m1;
+    # Same for m3,m4 using q rather than p.
+    my $m3 = pow_mod($enc, rshift($q+1,2), $q);
+    my $m4 = $q - $m3;
+
+    my $n = $p * $q;
+    my ($u, $v, $a, $b, $gcd) = euclid($p, $q);
+    my $r1 = ($a * $p * $m3 + $b * $q * $m1) % $n;
+    my $r2 = $n - $r1;
+    my $s1 = ($a * $p * $m3 - $b * $q * $m1) % $n;
+    my $s2 = $n - $s1;
+
+    return ($r1, $r2, $s1, $s2)
+}
+
+# -----------------------------------------------------------------
+# ---- Encrypted Key Exchange
+# -----------------------------------------------------------------
+
+#
+#   Es / Ds = symmetric encrypt / decrypt
+#   Ea / Da = asymmetric encrypt / decrypt
+#   pwd = shared password
+#
+#   A generates random Kpub and Kpriv keys
+#   A publishes A1 = Es(pwd, Kpub)
+#
+#   B calculates Kpub' = Ds(pwd, A1)
+#   B generates random Kb
+#   B publishes B1 = Es(pwd, Ea(Kpub', Kb))
+#
+#   A calculates Kb' = Da(Kpriv, Ds(pwd, B1))
+#   A generates random Ra
+#   A publishes A2 = Es(Kb', Ra)
+#
+#   B calculates Ra' = Ds(Kb, A2)
+#   B generates random Rb
+#   B publishes B2 = Es(Kb, Ra'.Rb)
+#
+#   A calculates Rc = Ds(Kb', B2)
+#   A verifies substr(Rc,0,len(Ra)) eq Ra
+#   A calculates Rb' = substr(Rc,len(Ra))
+#   A publishes A3 = Es(Kb', Rb')
+#
+#   B calculates Rb'' = Ds(Kb, A3)
+#   B verifies Rb'' eq Rb
+#
+#
+
+
+# -----------------------------------------------------------------
+# ---- Math
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+# Return ($base ** $exp) % $mod, in O(lg($exp)).
+sub pow_mod {
+    my ($base, $exp, $mod) = @_;
+    my $res = 1;
+    for (; $exp != 0; $exp = rshift($exp,1)) {
+        $res = mul_mod($res, $base, $mod) if ($exp & 1);
+        $base = mul_mod($base, $base, $mod);
+    }
+    return $res;
+}
+
+# -----------------------------------------------------------------
+sub mul_mod {
+    my ($a, $b, $mod) = @_;
+    return ($a * $b) % $mod;
+}
+
+# -----------------------------------------------------------------
+# Miller-Rabin primality test.
+sub is_prime {
+    my ($num) = @_;
+    my $loops = ($opt{l} or 8);
+
+    # For efficiency, try some small prime factors first.
+    return 0 if $num <= 1;
+    return ($num == 2) if is_even($num);
+    foreach my $p (qw(3 5 7 11 13 17 19 23 27)) {
+        return 1 if $num == $p;
+        return 0 if ($num % $p) == 0;
+    }
+
+    # Find s,t such that (t * 2**s == num-1), t odd.
+    # ie. s is number of trailing zeros in binary representation of num-1,
+    # and t is num-1 with those zeros right-shifted away.
+    my $s = 0;
+    my $t = $num-1;
+    while (is_even($t)) {
+        ++$s;
+        $t = rshift($t,1);
+    }
+
+    # Repeat Miller-Rabin loops times, each with a random witness.
+    while ($loops-- > 0) {
+        my $a = random(2, $num-2); # witness
+        my $x = pow_mod($a, $t, $num);
+        return 0 if pow_mod($x, $num-1, $num) != 1;
+        # Look for fake sqrt of 1: x^2 = 1 but x != +-1.
+        for (my $i = 0; $i < $s; ++$i) {
+            my $x2 = mul_mod($x, $x, $num);
+            return 0 if $x2 == 1 and $x != 1 and $x != $num-1;
+            $x = $x2;
+        }
+    }
+    return 1; # probably prime
+}
+
+# -----------------------------------------------------------------
+# Find a random prime number, a specified number of bits in length.
+sub find_prime {
+    my ($bits) = @_;
+    my $m = lshift(1,$bits);
+    my $n = random(rshift($m,1), $m-1) | 1;
+    for (;; $n -= 2) { last if is_prime($n); }
+    return $n;
+}
+
+# -----------------------------------------------------------------
+# Extended Euclidean algorithm.
+# euclid(u,v) returns (w,x,a,b,g,k) such that
+#   w = u>>k, x = v>>k, u = w<<k, v = x<<k
+#   g = gcd(u,v) = a*w - b*x = (a>>k)*u - (b>>k)*v
+sub euclid {
+    my ($u, $v) = @_;
+    if ($u < $v) { ($u,$v) = ($v,$u); }
+    my $k = 0;
+    for (; is_even($u) and is_even($v); ++$k) {
+        $u = rshift($u,1); $v = rshift($v,1);
+    }
+    my ($u1, $u2, $u3, $v1, $v2, $v3) = (1, 0, $u, $v, $u-1, $v);
+    do {
+        do {
+            if (is_even($u3)) {
+                if (not is_even($u1) or not is_even($u2)) {
+                    $u1 += $v; $u2 += $u;
+                }
+                $u1 = rshift($u1,1); $u2 = rshift($u2,1); $u3 = rshift($u3,1);
+            }
+            if (is_even($v3) or $u3 < $v3) { # swap u* with v*
+                ($u1,$u2,$u3,$v1,$v2,$v3) = ($v1,$v2,$v3,$u1,$u2,$u3);
+            }
+        } while (is_even($u3));
+        while ($u1 < $v1 or $u2 < $v2) {
+            $u1 += $v; $u2 += $u;
+        }
+        $u1 -= $v1; $u2 -= $v2; $u3 -= $v3;
+    } while ($v3 > 0); 
+    while ($u1 >= $v and $u2 >= $u) {
+        $u1 -= $v; $u2 -= $u;
+    }
+    $u1 = lshift($u1,$k); $u2 = lshift($u2,$k); $u3 = lshift($u3,$k);
+    return ($u, $v, $u1, $u2, $u3, $k);
+}
+
+# -----------------------------------------------------------------
+# Return (u^-1 % v); that is, x such that u*x % v == 1.
+sub inv {
+    my ($u, $v) = @_;
+    my ($u,$v,$a,$b,$gcd) = euclid($u, $v);
+    return undef if $gcd != 1; # no inverse
+    return $u - $b;
+}
+
+# -----------------------------------------------------------------
+# Return greatest common divisor of u and v.
+sub gcd {
+    my ($u, $v) = @_;
+    my ($u,$v,$a,$b,$gcd) = euclid($u, $v);
+    return $gcd;
+}
+
+# -----------------------------------------------------------------
+# Return least common multiple of u and v.
+sub lcm {
+    my ($u, $v) = @_;
+    my $gcd = gcd($u, $v);
+    return undef if not $gcd;
+    return new Math::BigInt(($u * $v) / $gcd); # Makes a BigFloat without this nonsense!
+}
+
+# -----------------------------------------------------------------
+sub is_even {
+    my ($n) = @_;
+    return ($n & 1) == 0;
+}
+
+# -----------------------------------------------------------------
+# Return random integer between $min and $max inclusive.
+# Simple RNG. Uses irand() to get bytes.
+sub random {
+    my ($min, $max) = @_;
+    return $min if $min >= $max;
+    my $m = $max - $min + 1;
+    my $bytes = 1 + int(log($m) / log(256));
+    my $n = 0;
+    for (my $i = 0; $i < $bytes; ++$i) {
+        $n = lshift($n,8) + (irand() & 0xff);
+    }
+    # FIXME: mod here is biased. So is &0xff just above. 
+    $n = ($n % $m);
+    ###do { $n -= $m } if $n >= $m;
+    return $min + $n;
+}
+
+# -----------------------------------------------------------------
+# Blum-Blum-Shub random number generator
+sub bbs {
+    my ($bits, $seed, $bytes) = @_;
+    my $rabin = rabin_gen($bits);
+    return undef if not $rabin;
+    my $x = $seed % $rabin->{n};
+    while (gcd($x, $rabin->{n}) != 1) {
+        return undef if not $x;
+        --$x;
+    }
+    my $byte = 0;
+    my $bits = 0;
+    my $data = '';
+    while (length($data) < $bytes) {
+        ###(slow) $x = pow_mod($x, 2, $rabin->{n});
+        $x = ($x * $x) % $rabin->{n};
+        $byte = lshift($byte,1) | ($x & 1);
+        if (++$bits == 8) {
+            $data .= chr $byte;
+            $byte = 0;
+            $bits = 0;
+        }
+    }
+    return $data;
+}
+
+# -----------------------------------------------------------------
+# Diffie-Hellman key exchange
+sub dh_key_exchange {
+    my ($bits) = @_;
+    my $base = 3;
+    my $mod = find_prime($bits);
+    my $sa = random(rshift($mod,1), $mod-1);
+    my $sb = random(rshift($mod,1), $mod-1);
+    my $pa = pow_mod($base, $sa, $mod);
+    my $pb = pow_mod($base, $sb, $mod);
+    my $ab = pow_mod($pb, $sa, $mod);
+    my $ba = pow_mod($pa, $sb, $mod);
+
+    print "A and B agree on base $base and modulus $mod\n";
+    print "A generates secret $sa\n";
+    print "B generates secret $sb\n";
+    print "A calculates $base^$sa mod $mod = $pa and publishes it\n";
+    print "B calculates $base^$sb mod $mod = $pb and publishes it\n";
+    print "A calculates shared $pb^$sa mod $mod = $ab\n";
+    print "B calculates shared $pa^$sb mod $mod = $ba\n";
+}
+
+# -----------------------------------------------------------------
+#
+sub luhn {
+    my ($ccn) = @_;
+    my $total = 0;
+    for (my $i = 0; $i < length($ccn); ++$i) {
+        my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
+        return undef if $digit < 0 or $digit >= 10;
+        $digit *= 2 if $i & 1;
+        $digit -= 9 if $digit > 9;
+        $total += $digit;
+    }
+    return ($total % 10) == 0;
+}
+
+# -----------------------------------------------------------------
+sub verhoeff {
+    my ($ccn, $gen) = @_;
+    my @d = (
+        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],
+        [ 1, 2, 3, 4, 0, 6, 7, 8, 9, 5 ],
+        [ 2, 3, 4, 0, 1, 7, 8, 9, 5, 6 ],
+        [ 3, 4, 0, 1, 2, 8, 9, 5, 6, 7 ],
+        [ 4, 0, 1, 2, 3, 9, 5, 6, 7, 8 ],
+        [ 5, 9, 8, 7, 6, 0, 4, 3, 2, 1 ],
+        [ 6, 5, 9, 8, 7, 1, 0, 4, 3, 2 ],
+        [ 7, 6, 5, 9, 8, 2, 1, 0, 4, 3 ],
+        [ 8, 7, 6, 5, 9, 3, 2, 1, 0, 4 ],
+        [ 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 ],
+    );
+    my @p = (
+        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],
+        [ 1, 5, 7, 6, 2, 8, 3, 0, 9, 4 ],
+        [ 5, 8, 0, 3, 7, 9, 6, 1, 4, 2 ],
+        [ 8, 9, 1, 6, 0, 4, 3, 5, 2, 7 ],
+        [ 9, 4, 5, 3, 1, 2, 6, 8, 7, 0 ],
+        [ 4, 2, 8, 6, 5, 7, 3, 9, 0, 1 ],
+        [ 2, 7, 9, 3, 8, 0, 6, 4, 1, 5 ],
+        [ 7, 0, 4, 6, 9, 1, 3, 2, 5, 8 ],
+    );
+    my @inv = ( 0, 4, 3, 2, 1, 5, 6, 7, 8, 9 );
+
+    $ccn .= '0' if $gen;
+    my $total = 0;
+    for (my $i = 0; $i < length($ccn); ++$i) {
+        my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
+        return undef if $digit < 0 or $digit >= 10;
+        my $p = ${$p[$i % 8]}[$digit];
+        $total = ${$d[$total]}[$p];
+    }
+    $total = $inv[$total] if $gen;
+    return $total;
+}
+
+# -----------------------------------------------------------------
+# Fisher-Yates
+sub shuffle {
+    my ($list) = @_;
+    for (my $i = @$list-1; $i > 0; --$i) {
+        my $j = random(0,$i);
+        ($$list[$i], $$list[$j]) = ($$list[$j], $$list[$i]);
+    }
+}
+
+# -----------------------------------------------------------------
+# ---- Misc
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub args {
+    my $args = shift @_;
+    my @rargs;
+    foreach my $arg (@$args) {
+        if ($arg eq '-') {
+            foreach my $var (@_) {
+                push @rargs, $$saved{$var};
+            }
+        ## } elsif ($arg =~ /^-([a-z]+)/) {
+        ##     $flags .= $1;
+        } else {
+            push @rargs, i($arg);
+        }
+    }
+    return @rargs;
+}
+
+# -----------------------------------------------------------------
+sub i {
+    my ($s) = @_;
+    return hex($s) if $s =~ /^0x/i;
+    return $s+0; # force to a BigInt
+}
+
+# -----------------------------------------------------------------
+sub number {
+    my ($n) = @_;
+    return $n->as_hex() if $opt{x};
+    return $n;
+}
+
+# -----------------------------------------------------------------
+sub print_map {
+    my $map = shift @_;
+    foreach my $key (@_) {
+        print $key, '= ', number($$map{$key}), "\n";
+    }
+}
+
+# -----------------------------------------------------------------
+sub lshift {
+    my ($n, $shift) = @_;
+    return int($n << $shift);
+}
+
+# -----------------------------------------------------------------
+sub rshift {
+    my ($n, $shift) = @_;
+    return int($n >> $shift);
+}
+
+# -----------------------------------------------------------------
+sub rmask {
+    my ($n) = @_;
+    return ((1 << $n) - 1);
+}
+
+# -----------------------------------------------------------------
+sub print_bin {
+    my ($data) = @_;
+    for (my $i = 0; $i < length $data; ++$i) {
+        my $ch = substr($data, $i, 1);
+        printf " %02x", ord $ch;
+    }
+}
+
+# -----------------------------------------------------------------
+sub save_obj {
+    my ($old) = @_;
+    my %new;
+    while (my ($k,$v) = each %$old) {
+        $new{$k} = $v;
+    }
+    $saved = \%new;
+}
