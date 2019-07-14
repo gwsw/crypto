@@ -6,39 +6,41 @@ use Time::HiRes qw(time);
 use Digest::SHA;
 
 Math::BigInt->accuracy(undef);
-my $rabin_shift = 8;
 my $saved;
-$|=1;
+
+my $rng_bits_default    = 32;
+my $mr_loops_default    = 8;
+my $rabin_shift_default = 8;
+my $rng; # the active RNG, returned from *_rng_init
 
 my %rngs = (
     'std' => \&std_rng_init, 
     'sec' => \&sec_rng_init, 
     'bbs' => \&bbs_rng_init, 
 );
-my $rng_bits_default = 32;
-my $mr_loops_default = 8;
-my $rng; # the active RNG, returned from *_rng_init
 
 my %opt;
 
-my @opt_hex       = ( 'hex',         'b', "Print numbers in hex." );
-my @opt_loops     = ( 'loops',       'i', "Number of loops in Miller-Rabin." );
-my @opt_rng       = ( 'rng',         's', "Random number generator (".join(',',keys %rngs)."). Optional bits follows colon (eg. \"bbs:64\")." );
-my @opt_seed      = ( 'seed',        's', "Seed string for RNG." );
-my @opt_slow_eg   = ( 'slow-eg',     'b', "Don't use Lagrange Theorem shortcut to compute mult. inverse." );
-my @opt_orig_rsa  = ( 'orig-rsa',    'b', "Use phi rather than lambda in calculating decryption exponent." );
-my @opt_raw_rabin = ( 'raw-rabin',   'b', "Don't pad message; decryption prints all 4 candidates." );
-my @opt_rand_rsa  = ( 'rand-rsa',    'b', "Use random encrytion key rather than 65537." );
+my @opt_hex         = ( 'hex',         'b', "Print numbers in hex." );
+my @opt_loops       = ( 'loops',       'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." );
+my @opt_orig_rsa    = ( 'orig-rsa',    'b', "Use phi rather than lambda in calculating decryption exponent." );
+my @opt_rng         = ( 'rng',         's', "Random number generator (".join(',',keys %rngs)."). Optional bits follows colon (eg. \"bbs:64\")." );
+my @opt_seed        = ( 'seed',        's', "Seed string for RNG." );
+my @opt_slow_eg     = ( 'slow-eg',     'b', "Don't use Lagrange Theorem shortcut to compute mult. inverse." );
+my @opt_rabin_shift = ( 'rabin-shift', 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." );
+my @opt_rand_rsa    = ( 'rand-rsa',    'b', "Use random encrytion key rather than 65537." );
+my @opt_raw_rabin   = ( 'raw-rabin',   'b', "Don't pad message; decryption prints all 4 candidates." );
 
 my @all_options = (
     \@opt_hex,
     \@opt_loops,
+    \@opt_orig_rsa,
     \@opt_rng,
     \@opt_seed,
     \@opt_slow_eg,
-    \@opt_orig_rsa,
-    \@opt_raw_rabin,
+    \@opt_rabin_shift,
     \@opt_rand_rsa,
+    \@opt_raw_rabin,
 );
 
 # -----------------------------------------------------------------
@@ -54,8 +56,8 @@ sub usage {
         $cmd = '';
         print "usage: crypto [options] [command args...]\n";
         foreach my $option (@all_options) {
-            my ($var, $arg, $desc) = @$option;
-            printf "        --%-9s  %s\n", $var, $desc;
+            my ($var, $type, $desc) = @$option;
+            printf "        --%-13s %s\n", $var . ($type eq 'b' ? ' ' : '='), $desc;
         }
     }
     uprint($cmd, '', "commands: (values in {} may be '-' if preceded by *-gen)\n");
@@ -96,6 +98,7 @@ sub main {
     $opt{loops} = $mr_loops_default if not $opt{loops};
     $opt{rng} = 'std' if not $opt{rng};
     $opt{seed} = time() if not $opt{seed};
+    $opt{'rabin-shift'} = $rabin_shift_default if not $opt{'rabin-shift'};
     return usage() if not set_rng($opt{rng}, $opt{seed});
 
     return command(@ARGV) if @ARGV;
@@ -167,6 +170,7 @@ sub command {
             }
         } else {
             foreach my $var (@_) {
+                # May be 'name', '!name', '+name', 'name=value'.
                 my $set = undef;
                 if ($var =~ /([!+]) (.*)/x) {
                     $var = $2;
@@ -178,7 +182,28 @@ sub command {
                     if ($set =~ /^on$/i) { $set = 1 }
                     if ($set =~ /^off$/i) { $set = 0 }
                 }
+                # Lookup option in all_options.
+                my $type = '';
+                foreach my $option (@all_options) {
+                    my ($ovar, $otype) = @$option;
+                    if ($ovar eq $var) {
+                        $type = $otype;
+                        last;
+                    }
+                }
+                if (not $type) {
+                    print "ERROR: invalid option $var\n";
+                    return 1;
+                }
+                if ($type ne 'b' and not defined $set) {
+                    print "ERROR: missing = after option $var\n";
+                    return 1;
+                }
                 my $value = (defined $set) ? $set : not $opt{$var};
+                if ($type eq 'i' and $value !~ /^\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
+                    print "ERROR: invalid number $value for option $var\n";
+                    return 1;
+                }
                 if ($var eq 'rng' and not set_rng($value, $opt{seed})) {
                     print "ERROR: cannot set RNG\n";
                     return 1;
@@ -317,7 +342,7 @@ sub command {
     } elsif ($cmd eq 'rabin-gen') {
         my ($bits) = args(\@_);
         return usage($cmd) if not $bits;
-        $bits += $rabin_shift if not $opt{'raw-rabin'};
+        $bits += $opt{'rabin-shift'} if not $opt{'raw-rabin'};
         my $rabin = rabin_gen($bits);
         if ($rabin) {
             save_obj($rabin);
@@ -327,7 +352,7 @@ sub command {
         my ($n,$msg) = args(\@_, 'n');
         return usage($cmd) if not $n or not defined $msg;
         # Use N low order zero bits to distinguish between 4 posssible decryptions.
-        $msg = lshift($msg, $rabin_shift) if not $opt{'raw-rabin'};
+        $msg = lshift($msg, $opt{'rabin-shift'}) if not $opt{'raw-rabin'};
         my $enc = rabin_encrypt($msg, $n);
         if ($enc) {
             print number($enc), "\n";
@@ -343,10 +368,10 @@ sub command {
             foreach my $m (@$decs) {
                 if ($opt{'raw-rabin'}) { # just print them all.
                     print number($m), "\n";
-                } elsif (($m & rmask($rabin_shift)) == 0) {
+                } elsif (($m & rmask($opt{'rabin-shift'})) == 0) {
                     # Found one with N low order zero bits.
                     # It might be the right decryption (or we might be very unlucky).
-                    print number(rshift($m, $rabin_shift)), "\n";
+                    print number(rshift($m, $opt{'rabin-shift'})), "\n";
                 }
             }
         }
