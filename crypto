@@ -30,6 +30,7 @@ my @opt_slow_eg     = ( 'slow-eg',     'b', "Don't use Lagrange Theorem shortcut
 my @opt_rabin_shift = ( 'rabin-shift', 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." );
 my @opt_rand_rsa    = ( 'rand-rsa',    'b', "Use random encrytion key rather than 65537." );
 my @opt_raw_rabin   = ( 'raw-rabin',   'b', "Don't pad message; decryption prints all 4 candidates." );
+my @opt_no_prompt   = ( 'no-prompt',   'b', "Don't print prompts." );
 
 my @all_options = (
     \@opt_hex,
@@ -41,6 +42,7 @@ my @all_options = (
     \@opt_rabin_shift,
     \@opt_rand_rsa,
     \@opt_raw_rabin,
+    \@opt_no_prompt,
 );
 
 # -----------------------------------------------------------------
@@ -53,36 +55,40 @@ sub usage(;$) {
         usage_options(1);
     }
     print "commands: (values in {} may be '-' if preceded by *-gen)\n" if not $cmd;
-    uprint($cmd, 'euclid', "NUM1 NUM2\n");
-    uprint($cmd, 'exp', "BASE EXP MOD\n");
-    uprint($cmd, 'find-prime', "BITS\n");
-    uprint($cmd, 'gcd', "NUM1 NUM2\n");
-    uprint($cmd, 'help', "[command]\n");
-    uprint($cmd, 'inv', "NUM MOD\n");
-    uprint($cmd, 'is-prime', "NUM\n");
-    uprint($cmd, 'kx', "BITS\n");
-    uprint($cmd, 'lcm', "NUM1 NUM2\n");
-    uprint($cmd, 'luhn', "[-g] CCN\n");
-    uprint($cmd, 'random', "MIN MAX\n");
-    uprint($cmd, 'random-bytes', "BYTES\n");
-    uprint($cmd, 'shuffle', "NUM\n");
-    uprint($cmd, 'verhoeff', "[-g] CCN\n");
-    uprint($cmd, 'rsa-gen', "BITS\n");
-    uprint($cmd, 'rsa-encrypt', "{N E} MSG\n");
-    uprint($cmd, 'rsa-decrypt', "{N D} MSG\n");
-    uprint($cmd, 'eg-gen', "BITS\n");
-    uprint($cmd, 'eg-sign', "   {P G X} MSG\n");
-    uprint($cmd, 'eg-verify', " {P G Y} R S MSG\n");
-    uprint($cmd, 'eg-encrypt', "{P G Y} MSG\n");
-    uprint($cmd, 'eg-decrypt', "{P G X} R S\n");
-    uprint($cmd, 'rabin-gen', "BITS\n");
-    uprint($cmd, 'rabin-encrypt', "{N} MSG\n");
-    uprint($cmd, 'rabin-decrypt', "{P Q N} MSG\n");
-    uprint($cmd, 'schnorr-gen', "BITS QBITS\n");
-    uprint($cmd, 'schnorr-sign', "{P Q A S} MSG\n");
-    uprint($cmd, 'schnorr-verify', "{P Q A V} E Y MSG\n");
-    uprint($cmd, 'option', "[+!]OPTION[=VALUE]...\n");
+    my $pr = 0;
+    $pr |= uprint($cmd, 'euclid', "NUM1 NUM2\n");
+    $pr |= uprint($cmd, 'exp', "BASE EXP MOD\n");
+    $pr |= uprint($cmd, 'find-prime', "BITS\n");
+    $pr |= uprint($cmd, 'gcd', "NUM1 NUM2\n");
+    $pr |= uprint($cmd, 'help', "[command]\n");
+    $pr |= uprint($cmd, 'inv', "NUM MOD\n");
+    $pr |= uprint($cmd, 'is-prime', "NUM\n");
+    $pr |= uprint($cmd, 'kx', "BITS\n");
+    $pr |= uprint($cmd, 'lcm', "NUM1 NUM2\n");
+    $pr |= uprint($cmd, 'luhn', "[-g] CCN\n");
+    $pr |= uprint($cmd, 'random', "MIN MAX\n");
+    $pr |= uprint($cmd, 'random-bytes', "BYTES\n");
+    $pr |= uprint($cmd, 'shuffle', "NUM\n");
+    $pr |= uprint($cmd, 'verhoeff', "[-g] CCN\n");
+    $pr |= uprint($cmd, 'rsa-gen', "BITS\n");
+    $pr |= uprint($cmd, 'rsa-encrypt', "{N E} MSG\n");
+    $pr |= uprint($cmd, 'rsa-decrypt', "{N D} MSG\n");
+    $pr |= uprint($cmd, 'eg-gen', "BITS\n");
+    $pr |= uprint($cmd, 'eg-sign', "   {P G X} MSG\n");
+    $pr |= uprint($cmd, 'eg-verify', " {P G Y} R S MSG\n");
+    $pr |= uprint($cmd, 'eg-encrypt', "{P G Y} MSG\n");
+    $pr |= uprint($cmd, 'eg-decrypt', "{P G X} R S\n");
+    $pr |= uprint($cmd, 'rabin-gen', "BITS\n");
+    $pr |= uprint($cmd, 'rabin-encrypt', "{N} MSG\n");
+    $pr |= uprint($cmd, 'rabin-decrypt', "{P Q N} MSG\n");
+    $pr |= uprint($cmd, 'schnorr-gen', "BITS QBITS\n");
+    $pr |= uprint($cmd, 'schnorr-sign', "{P Q A S} MSG\n");
+    $pr |= uprint($cmd, 'schnorr-verify', "{P Q A V} E Y MSG\n");
+    $pr |= uprint($cmd, 'option', "[+!]OPTION[=VALUE]...\n");
     usage_options(0) if not $acmd or $acmd eq 'option';
+    if ($cmd and not $pr) {
+        print "invalid command \"$cmd\"\n";
+    }
     return 0;
 }
 
@@ -99,13 +105,22 @@ sub usage_options {
 # -----------------------------------------------------------------
 sub uprint($$$) {
     my ($cmd, $wcmd, $args) = @_;
-    print "  $wcmd $args" if not $cmd or ($wcmd and $cmd eq $wcmd);
+    if (not $cmd or ($wcmd and $cmd eq $wcmd)) {
+        print "  $wcmd $args";
+        return 1;
+    }
+    return 0;
 }
 
 # -----------------------------------------------------------------
 exit (main() ? 0 : 1);
 sub main {
-    my @alist = ('hex', 'loops=i', 'rng=s', 'seed=s', 'slow-eg', 'orig-rsa', 'raw-rabin', 'rand-rsa');
+    my @alist;
+    foreach my $option (@all_options) {
+        my ($var, $type) = @$option;
+        $var .= "=$type" unless $type eq 'b';
+        push @alist, $var;
+    }
     return usage('shell') if not Getopt::Long::GetOptionsFromArray(\@ARGV, \%opt, @alist);
     $opt{loops} = $mr_loops_default if not $opt{loops};
     $opt{rng} = 'std' if not $opt{rng};
@@ -119,18 +134,23 @@ sub main {
     return command(@ARGV) if @ARGV; # crypto command is on cmd line
 
     # Interactive mode.
+    my $ok = 1;
     for (;;) {
-        printf "> ";
+        printf "> " unless $opt{'no-prompt'};
         my $line = <>;
+        last if not defined $line;
         $line =~ s/^\s+//;
         $line =~ s/\s$//;
         next if $line eq '';
         next if $line =~ /^#/;
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
         my @args = split /\s+/, $line;
-        print "command failed\n" if not command(@args);
+        if (not command(@args)) {
+            print "*** command failed\n";
+            $ok = 0;
+        }
     }
-    return 1;
+    return $ok;
 }
 
 # -----------------------------------------------------------------
@@ -179,59 +199,7 @@ sub command(@) {
         usage($cmd);
         return 1;
     } elsif ($cmd eq 'option') {
-        if (not @_) {
-            foreach my $option (@all_options) {
-                my ($var) = @$option;
-                print_option($var);
-            }
-        } else {
-            foreach my $var (@_) {
-                # May be 'name', '!name', '+name', 'name=value'.
-                my $set = undef;
-                if ($var =~ /([!+]) (.*)/x) {
-                    $var = $2;
-                    $set = ($1 eq '+') ? 1 : 0;
-                }
-                if ($var =~ /^ ([^=]+) = (.*)/x) {
-                    $var = $1;
-                    $set = $2;
-                    if ($set =~ /^on$/i) { $set = 1 }
-                    if ($set =~ /^off$/i) { $set = 0 }
-                }
-                # Lookup option in all_options.
-                my $type = '';
-                foreach my $option (@all_options) {
-                    my ($ovar, $otype) = @$option;
-                    if ($ovar eq $var) {
-                        $type = $otype;
-                        last;
-                    }
-                }
-                if (not $type) {
-                    print "ERROR: invalid option $var\n";
-                    return 1;
-                }
-                if ($type ne 'b' and not defined $set) {
-                    print "ERROR: missing = after option $var\n";
-                    return 1;
-                }
-                my $value = (defined $set) ? $set : not $opt{$var};
-                if ($type eq 'i' and $value !~ /^\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
-                    print "ERROR: invalid number $value for option $var\n";
-                    return 1;
-                }
-                if ($var eq 'rng' and not set_rng($value, $opt{seed})) {
-                    print "ERROR: cannot set RNG\n";
-                    return 1;
-                }
-                if ($var eq 'seed' and not set_rng($opt{rng}, $value)) {
-                    print "ERROR: cannot seed RNG\n";
-                    return 1;
-                }
-                $opt{$var} = $value;
-                print_option($var);
-            }
-        }
+        return 1 if not options(@_);
     } elsif ($cmd eq 'euclid') {
         my ($u, $v) = args(\@_);
         return usage($cmd) if not defined $v;
@@ -434,10 +402,66 @@ sub command(@) {
         }
     } else {
         print "invalid command \"$cmd\"; use \"help\" for help\n";
-        return 0;
-        return usage();
+        return 1;
     }
     printf "=%.6f sec\n", time()-$start_time if $opt{t};
+    return 1;
+}
+
+sub options {
+    if (not @_) {
+        foreach my $option (@all_options) {
+            my ($var) = @$option;
+            print_option($var);
+        }
+    } else {
+        foreach my $var (@_) {
+            # May be 'name', '!name', '+name', 'name=value'.
+            my $set = undef;
+            if ($var =~ /([!+]) (.*)/x) {
+                $var = $2;
+                $set = ($1 eq '+') ? 1 : 0;
+            }
+            if ($var =~ /^ ([^=]+) = (.*)/x) {
+                $var = $1;
+                $set = $2;
+                if ($set =~ /^on$/i) { $set = 1 }
+                if ($set =~ /^off$/i) { $set = 0 }
+            }
+            # Lookup option in all_options.
+            my $type = '';
+            foreach my $option (@all_options) {
+                my ($ovar, $otype) = @$option;
+                if ($ovar eq $var) {
+                    $type = $otype;
+                    last;
+                }
+            }
+            if (not $type) {
+                print "ERROR: invalid option $var\n";
+                return 0;
+            }
+            if ($type ne 'b' and not defined $set) {
+                print "ERROR: missing = after option $var\n";
+                return 0;
+            }
+            my $value = (defined $set) ? $set : not $opt{$var};
+            if ($type eq 'i' and $value !~ /^\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
+                print "ERROR: invalid number $value for option $var\n";
+                return 0;
+            }
+            if ($var eq 'rng' and not set_rng($value, $opt{seed})) {
+                print "ERROR: cannot set RNG\n";
+                return 0;
+            }
+            if ($var eq 'seed' and not set_rng($opt{rng}, $value)) {
+                print "ERROR: cannot seed RNG\n";
+                return 0;
+            }
+            $opt{$var} = $value;
+            print_option($var);
+        }
+    }
     return 1;
 }
 
