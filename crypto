@@ -19,30 +19,19 @@ my %rngs = (
     'bbs' => \&bbs_rng_init, 
 );
 
-my %opt;
+my %opt; # currently set options
 
-my @opt_hex         = ( 'hex',         'b', "Print numbers in hex." );
-my @opt_loops       = ( 'loops',       'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." );
-my @opt_orig_rsa    = ( 'orig-rsa',    'b', "Use phi rather than lambda in calculating decryption exponent." );
-my @opt_rng         = ( 'rng',         's', "Random number generator (".join(',',keys %rngs)."). Optional bits follows colon (eg. \"bbs:64\")." );
-my @opt_seed        = ( 'seed',        's', "Seed string for RNG." );
-my @opt_slow_eg     = ( 'slow-eg',     'b', "Don't use Lagrange Theorem shortcut to compute mult. inverse." );
-my @opt_rabin_shift = ( 'rabin-shift', 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." );
-my @opt_rand_rsa    = ( 'rand-rsa',    'b', "Use random encrytion key rather than 65537." );
-my @opt_raw_rabin   = ( 'raw-rabin',   'b', "Don't pad message; decryption prints all 4 candidates." );
-my @opt_no_prompt   = ( 'no-prompt',   'b', "Don't print prompts." );
-
-my @all_options = (
-    \@opt_hex,
-    \@opt_loops,
-    \@opt_orig_rsa,
-    \@opt_rng,
-    \@opt_seed,
-    \@opt_slow_eg,
-    \@opt_rabin_shift,
-    \@opt_rand_rsa,
-    \@opt_raw_rabin,
-    \@opt_no_prompt,
+my %all_options = (
+    'hex'         => [ 'b', "Print numbers in hex." ],
+    'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
+    'orig-rsa'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
+    'rng'         => [ 's', "Random number generator (".join(',',keys %rngs)."). Optional bits follows colon (eg. \"bbs:64\")." ],
+    'seed'        => [ 's', "Seed string for RNG." ],
+    'slow-eg'     => [ 'b', "Don't use Lagrange Theorem shortcut to compute mult. inverse." ],
+    'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
+    'rand-rsa'    => [ 'b', "Use random encrytion key rather than 65537." ],
+    'raw-rabin'   => [ 'b', "Don't pad message; decryption prints all 4 candidates." ],
+    'no-prompt'   => [ 'b', "Don't print prompts." ],
 );
 
 # -----------------------------------------------------------------
@@ -96,8 +85,8 @@ sub usage(;$) {
 sub usage_options {
     my ($dashes) = @_;
     my $dash = $dashes ? '--' : '';
-    foreach my $option (@all_options) {
-        my ($var, $type, $desc) = @$option;
+    while (my ($var,$option) = each %all_options) {
+        my ($type, $desc) = @$option;
         printf "        $dash%-13s %s\n", $var . ($type eq 'b' ? ' ' : '='), $desc;
     }
 }
@@ -116,16 +105,16 @@ sub uprint($$$) {
 exit (main() ? 0 : 1);
 sub main {
     my @alist;
-    foreach my $option (@all_options) {
-        my ($var, $type) = @$option;
+    while (my ($var,$option) = each %all_options) {
+        my ($type) = @$option;
         $var .= "=$type" unless $type eq 'b';
         push @alist, $var;
     }
-    return usage('shell') if not Getopt::Long::GetOptionsFromArray(\@ARGV, \%opt, @alist);
+    return usage('shell') if not GetOptions(\%opt, @alist);
     $opt{loops} = $mr_loops_default if not $opt{loops};
+    $opt{'rabin-shift'} = $rabin_shift_default if not $opt{'rabin-shift'};
     $opt{rng} = 'std' if not $opt{rng};
     $opt{seed} = time() if not $opt{seed};
-    $opt{'rabin-shift'} = $rabin_shift_default if not $opt{'rabin-shift'};
     return usage() if not set_rng($opt{rng}, $opt{seed});
 
     # Change 'crypto help' to 'crypto help shell'.
@@ -170,16 +159,9 @@ sub set_rng($$) {
 # -----------------------------------------------------------------
 sub print_option($) {
     my ($var) = @_;
-    my $fnd_option;
-    foreach my $option (@all_options) {
-        my ($ovar) = @$option;
-        if ($ovar eq $var) {
-            $fnd_option = $option;
-            last;
-        }
-    }
-    return if not $fnd_option;
-    my ($var, $type, $desc) = @$fnd_option;
+    my $option = $all_options{$var};
+    return if not $option;
+    my ($type, $desc) = @$option;
     print "$var = ";
     if ($type eq 'b') {
         print ($opt{$var} ? 'ON' : 'off');
@@ -408,59 +390,53 @@ sub command(@) {
     return 1;
 }
 
+# -----------------------------------------------------------------
 sub options {
-    if (not @_) {
-        foreach my $option (@all_options) {
-            my ($var) = @$option;
+    if (not @_) { # print all options
+        foreach my $var (keys %all_options) {
             print_option($var);
         }
-    } else {
-        foreach my $var (@_) {
-            # May be 'name', '!name', '+name', 'name=value'.
-            my $set = undef;
-            if ($var =~ /([!+]) (.*)/x) {
-                $var = $2;
-                $set = ($1 eq '+') ? 1 : 0;
-            }
-            if ($var =~ /^ ([^=]+) = (.*)/x) {
-                $var = $1;
-                $set = $2;
-                if ($set =~ /^on$/i) { $set = 1 }
-                if ($set =~ /^off$/i) { $set = 0 }
-            }
-            # Lookup option in all_options.
-            my $type = '';
-            foreach my $option (@all_options) {
-                my ($ovar, $otype) = @$option;
-                if ($ovar eq $var) {
-                    $type = $otype;
-                    last;
-                }
-            }
-            if (not $type) {
-                print "ERROR: invalid option $var\n";
-                return 0;
-            }
-            if ($type ne 'b' and not defined $set) {
-                print "ERROR: missing = after option $var\n";
-                return 0;
-            }
-            my $value = (defined $set) ? $set : not $opt{$var};
-            if ($type eq 'i' and $value !~ /^\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
-                print "ERROR: invalid number $value for option $var\n";
-                return 0;
-            }
-            if ($var eq 'rng' and not set_rng($value, $opt{seed})) {
-                print "ERROR: cannot set RNG\n";
-                return 0;
-            }
-            if ($var eq 'seed' and not set_rng($opt{rng}, $value)) {
-                print "ERROR: cannot seed RNG\n";
-                return 0;
-            }
-            $opt{$var} = $value;
-            print_option($var);
+        return 1;
+    }
+    foreach my $var (@_) {
+        # var may be 'name', '!name', '+name', 'name=value'.
+        my $set = undef;
+        if ($var =~ /([!+]) (.*)/x) { # !name or +name
+            $var = $2;
+            $set = ($1 eq '+') ? 1 : 0;
         }
+        if ($var =~ /^ ([^=]+) = (.*)/x) { # name=value
+            $var = $1;
+            $set = $2;
+            if ($set =~ /^on$/i) { $set = 1 }
+            if ($set =~ /^off$/i) { $set = 0 }
+        }
+        # Lookup option in all_options.
+        my $option = $all_options{$var};
+        if (not $option) {
+            print "ERROR: invalid option $var\n";
+            return 0;
+        }
+        my ($type) = @$option;
+        if ($type ne 'b' and not defined $set) {
+            print "ERROR: missing = after option $var\n";
+            return 0;
+        }
+        my $value = (defined $set) ? $set : not $opt{$var};
+        if ($type eq 'i' and $value !~ /^\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
+            print "ERROR: invalid number $value for option $var\n";
+            return 0;
+        }
+        if ($var eq 'rng' and not set_rng($value, $opt{seed})) {
+            print "ERROR: cannot set RNG\n";
+            return 0;
+        }
+        if ($var eq 'seed' and not set_rng($opt{rng}, $value)) {
+            print "ERROR: cannot seed RNG\n";
+            return 0;
+        }
+        $opt{$var} = $value;
+        print_option($var);
     }
     return 1;
 }
