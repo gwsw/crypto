@@ -34,35 +34,35 @@ my %all_options = (
     'no-prompt'   => [ 'b', "Don't print prompts." ],
 );
 my %all_commands = (
-    'euclid'          => [ \&cmd_euclid,          '',  "NUM1 NUM2\n" ],
-    'exp'             => [ \&cmd_exp,             '',  "BASE EXP MOD\n" ],
-    'find-prime'      => [ \&cmd_find_prime,      '',  "BITS\n" ],
-    'gcd'             => [ \&cmd_gcd,             '',  "NUM1 NUM2\n" ],
-    'help'            => [ \&cmd_help,            '',  "[command]\n" ],
-    'inv'             => [ \&cmd_inv,             '',  "NUM MOD\n" ],
-    'is-prime'        => [ \&cmd_is_prime,        '',  "NUM\n" ],
-    'kx'              => [ \&cmd_kx,              '',  "BITS\n" ],
-    'lcm'             => [ \&cmd_lcm,             '',  "NUM1 NUM2\n" ],
-    'luhn'            => [ \&cmd_luhn,            'c', "[-g] CCN\n" ],
-    'random'          => [ \&cmd_random,          '',  "MIN MAX\n" ],
-    'random-bytes'    => [ \&cmd_random_bytes,    '',  "BYTES\n" ],
-    'shuffle'         => [ \&cmd_shuffle,         '',  "NUM\n" ],
-    'verhoeff'        => [ \&cmd_verhoeff,        'c', "[-g] CCN\n" ],
-    'rsa-gen'         => [ \&cmd_rsa_gen,         '',  "BITS\n" ],
-    'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     '',  "{N E} MSG\n" ],
-    'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     '',  "{N D} MSG\n" ],
-    'eg-gen'          => [ \&cmd_eg_gen,          '',  "BITS\n" ],
-    'eg-sign'         => [ \&cmd_eg_sign,         '',  "   {P G X} MSG\n" ],
-    'eg-verify'       => [ \&cmd_eg_verify,       '',  " {P G Y} R S MSG\n" ],
-    'eg-encrypt'      => [ \&cmd_eg_encrypt,      '',  "{P G Y} MSG\n" ],
-    'eg-decrypt'      => [ \&cmd_eg_decrypt,      '',  "{P G X} R S\n" ],
-    'rabin-gen'       => [ \&cmd_rabin_gen,       '',  "BITS\n" ],
-    'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   '',  "{N} MSG\n" ],
-    'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   '',  "{P Q N} MSG\n" ],
-    'schnorr-gen'     => [ \&cmd_schnorr_gen,     '',  "BITS QBITS\n" ],
-    'schnorr-sign'    => [ \&cmd_schnorr_sign,    '',  "{P Q A S} MSG\n" ],
-    'schnorr-verify'  => [ \&cmd_schnorr_verify,  '',  "{P Q A V} E Y MSG\n" ],
-    'option'          => [ \&cmd_option,          '',  "[+!]OPTION[=VALUE]...\n" ],
+    'euclid'          => [ \&cmd_euclid,          "NUM1 NUM2\n" ],
+    'exp'             => [ \&cmd_exp,             "BASE EXP MOD\n" ],
+    'find-prime'      => [ \&cmd_find_prime,      "BITS\n" ],
+    'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2\n" ],
+    'help'            => [ \&cmd_help,            "[command]\n" ],
+    'inv'             => [ \&cmd_inv,             "NUM MOD\n" ],
+    'is-prime'        => [ \&cmd_is_prime,        "NUM\n" ],
+    'kx'              => [ \&cmd_kx,              "BITS\n" ],
+    'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2\n" ],
+    'luhn'            => [ \&cmd_luhn,            "[-g] CCN\n" ],
+    'random'          => [ \&cmd_random,          "MIN MAX\n" ],
+    'random-bytes'    => [ \&cmd_random_bytes,    "BYTES\n" ],
+    'shuffle'         => [ \&cmd_shuffle,         "NUM\n" ],
+    'verhoeff'        => [ \&cmd_verhoeff,        "[-g] CCN\n" ],
+    'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS\n" ],
+    'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG\n" ],
+    'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG\n" ],
+    'eg-gen'          => [ \&cmd_eg_gen,          "BITS\n" ],
+    'eg-sign'         => [ \&cmd_eg_sign,         "   {P G X} MSG\n" ],
+    'eg-verify'       => [ \&cmd_eg_verify,       " {P G Y} R S MSG\n" ],
+    'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG\n" ],
+    'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S\n" ],
+    'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS\n" ],
+    'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG\n" ],
+    'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG\n" ],
+    'schnorr-gen'     => [ \&cmd_schnorr_gen,     "BITS QBITS\n" ],
+    'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A S} MSG\n" ],
+    'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A V} E Y MSG\n" ],
+    'option'          => [ \&cmd_option,          "[+!]OPTION[=VALUE]...\n" ],
 );
 
 # -----------------------------------------------------------------
@@ -78,7 +78,7 @@ sub usage(;$) {
         print "commands: (values in {} may be '-' if preceded by *-gen)\n";
         foreach my $wcmd (sort keys %all_commands) {
             my $command = $all_commands{$wcmd};
-            my ($handler, $flags, $args) = @$command;
+            my ($handler, $args) = @$command;
             print "  $wcmd $args";
             usage_options(0) if $wcmd eq 'option' and $acmd ne 'shell';
         }
@@ -87,7 +87,7 @@ sub usage(;$) {
         if (not $command) {
             print "invalid command \"$cmd\"\n";
         } else {
-            my ($handler, $flags, $args) = @$command;
+            my ($handler, $args) = @$command;
             print "  $cmd $args";
             usage_options(0) if $cmd eq 'option';
         }
@@ -170,8 +170,7 @@ sub command(@) {
         print "invalid command \"$cmd\"; use \"help\" for help\n";
         return 1;
     }
-    my ($handler, $flags) = @$command;
-    my $needs_cmd = ($flags and ($flags =~ /c/));
+    my ($handler) = @$command;
     my $start_time = time();
     my $ret = &$handler(@_);
     printf "=%.6f sec\n", time()-$start_time if $opt{t} and $ret;
@@ -1059,7 +1058,7 @@ sub dh_key_exchange($) {
 }
 
 # -----------------------------------------------------------------
-# Standard credit card check digit.
+# Standard (Luhn) credit card check digit.
 sub luhn($;$) {
     my ($ccn, $gen) = @_;
     my $total = 0;
@@ -1077,7 +1076,7 @@ sub luhn($;$) {
 }
 
 # -----------------------------------------------------------------
-# Better credit card check digit.
+# Verhoeff credit card check digit.
 sub verhoeff($;$) {
     my ($ccn, $gen) = @_;
     my @d = (
@@ -1145,6 +1144,7 @@ sub hash_num($) {
 sub args(+@) {
     my $args = shift @_;
     my @rargs;
+    push @rargs, shift @$args;
     foreach my $arg (@$args) {
         if ($arg eq '-') {
             foreach my $var (@_) {
