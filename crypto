@@ -1,31 +1,33 @@
 #!/usr/bin/perl
+
+# Sample code for cryptographic operations.
+
 use strict;
 use bignum;
 use Getopt::Long;
 use Time::HiRes qw(time);
 use Digest::SHA;
 
-Math::BigInt->accuracy(undef);
-my $saved;
-
 my $rng_bits_default    = 32;
 my $mr_loops_default    = 8;
 my $rabin_shift_default = 8;
 my $rng; # the active RNG, returned from *_rng_init
+my %opt; # currently set options
+my $saved;
 
-my %rngs = (
+my %set_alias = ( 'on' => 1, 'off' => 0 );
+
+my %all_rngs = (
     'std' => \&std_rng_init, 
     'sec' => \&sec_rng_init, 
     'bbs' => \&bbs_rng_init, 
 );
 
-my %opt; # currently set options
-
 my %all_options = (
     'hex'         => [ 'b', "Print numbers in hex." ],
     'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
     'orig-rsa'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
-    'rng'         => [ 's', "Random number generator (".join(',',keys %rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
+    'rng'         => [ 's', "Random number generator (".join(',',keys %all_rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
     'seed'        => [ 's', "Seed string for RNG.", \&opt_seed ],
     'slow-eg'     => [ 'b', "Don't use Lagrange Theorem shortcut to compute mult. inverse." ],
     'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
@@ -33,46 +35,51 @@ my %all_options = (
     'raw-rabin'   => [ 'b', "Don't pad message; decryption prints all 4 candidates." ],
     'no-prompt'   => [ 'b', "Don't print prompts." ],
 );
+
 my %all_commands = (
-    'euclid'          => [ \&cmd_euclid,          "NUM1 NUM2\n" ],
-    'exp'             => [ \&cmd_exp,             "BASE EXP MOD\n" ],
-    'find-prime'      => [ \&cmd_find_prime,      "BITS\n" ],
-    'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2\n" ],
-    'help'            => [ \&cmd_help,            "[command]\n" ],
-    'inv'             => [ \&cmd_inv,             "NUM MOD\n" ],
-    'is-prime'        => [ \&cmd_is_prime,        "NUM\n" ],
-    'kx'              => [ \&cmd_kx,              "BITS\n" ],
-    'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2\n" ],
-    'luhn'            => [ \&cmd_luhn,            "[-g] CCN\n" ],
-    'random'          => [ \&cmd_random,          "MIN MAX\n" ],
-    'random-bytes'    => [ \&cmd_random_bytes,    "BYTES\n" ],
-    'shuffle'         => [ \&cmd_shuffle,         "NUM\n" ],
-    'verhoeff'        => [ \&cmd_verhoeff,        "[-g] CCN\n" ],
-    'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS\n" ],
-    'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG\n" ],
-    'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG\n" ],
-    'eg-gen'          => [ \&cmd_eg_gen,          "BITS\n" ],
-    'eg-sign'         => [ \&cmd_eg_sign,         "   {P G X} MSG\n" ],
-    'eg-verify'       => [ \&cmd_eg_verify,       " {P G Y} R S MSG\n" ],
-    'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG\n" ],
-    'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S\n" ],
-    'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS\n" ],
-    'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG\n" ],
-    'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG\n" ],
-    'schnorr-gen'     => [ \&cmd_schnorr_gen,     "BITS QBITS\n" ],
-    'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG\n" ],
-    'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG\n" ],
-    'option'          => [ \&cmd_option,          "[+!]OPTION[=VALUE]...\n" ],
+    'euclid'          => [ \&cmd_euclid,          "NUM1 NUM2" ],
+    'exp'             => [ \&cmd_exp,             "BASE EXP MOD" ],
+    'find-prime'      => [ \&cmd_find_prime,      "BITS" ],
+    'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2" ],
+    'help'            => [ \&cmd_help,            "[command]" ],
+    'inv'             => [ \&cmd_inv,             "NUM MOD" ],
+    'is-prime'        => [ \&cmd_is_prime,        "NUM" ],
+    'kx'              => [ \&cmd_kx,              "BITS" ],
+    'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2" ],
+    'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
+    'random'          => [ \&cmd_random,          "MIN MAX" ],
+    'random-bytes'    => [ \&cmd_random_bytes,    "BYTES" ],
+    'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
+    'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
+    'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
+    'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
+    'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
+    'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
+    'eg-sign'         => [ \&cmd_eg_sign,         "   {P G X} MSG" ],
+    'eg-verify'       => [ \&cmd_eg_verify,       " {P G Y} R S MSG" ],
+    'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG" ],
+    'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S" ],
+    'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS" ],
+    'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG" ],
+    'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
+    'schnorr-gen'     => [ \&cmd_schnorr_gen,     "BITS QBITS" ],
+    'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG" ],
+    'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG" ],
+    'option'          => [ \&cmd_option,          "[+!]OPTION[=VALUE]..." ],
 );
-my %set_alias = ( 'on' => 1, 'off' => 0 );
+
 
 # -----------------------------------------------------------------
+# Print usage.
+# cmd = NAME    : Print usage for command NAME.
+# cmd = ''      : Print usage for all commands.
+# cmd = 'shell' : Print usage for command line and all commands.
 sub usage(;$) {
     my ($acmd) = @_;
     my $cmd = $acmd;
     if ($cmd eq 'shell') {
         $cmd = '';
-        print "usage: crypto [options] [command args...]\n";
+        print "usage: crypto [options] [command args...[';' command args...]...]\n";
         usage_options(1);
     }
     if (not $cmd) {
@@ -80,7 +87,7 @@ sub usage(;$) {
         foreach my $wcmd (sort keys %all_commands) {
             my $command = $all_commands{$wcmd};
             my ($handler, $args) = @$command;
-            print "  $wcmd $args";
+            print "  $wcmd $args\n";
             usage_options(0) if $wcmd eq 'option' and $acmd ne 'shell';
         }
     } else {
@@ -89,7 +96,7 @@ sub usage(;$) {
             print "invalid command \"$cmd\"\n";
         } else {
             my ($handler, $args) = @$command;
-            print "  $cmd $args";
+            print "  $cmd $args\n";
             usage_options(0) if $cmd eq 'option';
         }
     }
@@ -170,8 +177,11 @@ sub set_rng($$) {
     if ($rname =~ /^([^:]+) : (\d+)/x) {
         ($rname, $bits) = ($1,$2);
     }
-    my $init = $rngs{$rname};
-    return undef if not $init;
+    my $init = $all_rngs{$rname};
+    if (not $init) {
+        print "ERROR: invalid RNG \"$rname\"\n";
+        return undef;
+    }
     my $new_rng = &$init($bits, $seed);
     $rng = $new_rng if $new_rng;
     return $new_rng;
@@ -515,15 +525,13 @@ sub cmd_option {
     foreach my $var (@_) {
         # var may be 'name', '!name', '+name', 'name=value'.
         my $set = undef;
-        if ($var =~ /([!+]) (.*)/x) { # !name or +name
+        if ($var =~ /^ ([!+]) (.*) \s*$/x) { # !name or +name
             $var = $2;
             $set = ($1 eq '+') ? 1 : 0;
-        }
-        if ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
+        } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
             $var = $1;
             $set = $2;
-        }
-        if ($var =~ /^ ([^=]+) = (.*) \s*$ /x) { # name=value
+        } elsif ($var =~ /^ ([^=]+) = (.*) \s*$ /x) { # name=value
             $var = $1;
             $set = $2;
         }
@@ -556,7 +564,6 @@ sub cmd_option {
 sub opt_rng {
     my ($value) = @_;
     if (not set_rng($value, $opt{seed})) {
-        print "ERROR: cannot set RNG\n";
         return 0;
     }
     return 1;
@@ -566,7 +573,6 @@ sub opt_rng {
 sub opt_seed {
     my ($value) = @_;
     if (not set_rng($opt{rng}, $value)) {
-        print "ERROR: cannot seed RNG\n";
         return 0;
     }
     return 1;
@@ -723,10 +729,12 @@ sub rabin_decrypt($$$$) {
         print "ERROR: encryption $enc must be less than $n\n";
         return undef;
     }
-    # mp = sqrt(enc) mod p. That is, (mp*mp % p) == enc.
+    # Find modular square root of enc, mod p and q.
+    # That is, (mp*mp % p) = enc, and (mq*mq % q) = enc.
     my $mp = pow_mod($enc, rshift($p+1,2), $p);
     my $mq = pow_mod($enc, rshift($q+1,2), $q);
 
+    # Find yp and yq such that yp*p + yq*q = 1.
     my ($xp,$xq,$yp,$yq) = euclid($p, $q);
     die if $xp != $p or $xq != $q;
 
@@ -753,6 +761,7 @@ sub schnorr_gen($$) {
     my ($p,$q,$r) = find_pq_prime($bits, $qbits);
     my $a = pow_mod(3, $r, $p); # a has order q
     die if pow_mod($a, $q, $p) != 1;
+
     my $s = random(2, $q-1); # private key
     my $v = pow_mod(inv($a, $p), $s, $p); # public key
     return { 'p' => $p, 'q' => $q, 'a' => $a, 'qbits' => $qbits, 's' => $s, 'v' => $v };
@@ -774,6 +783,96 @@ sub schnorr_verify($$$$$$$$) {
     return $e2 == $e;
 }
 
+
+# -----------------------------------------------------------------
+# Diffie-Hellman key exchange
+sub dh_key_exchange($) {
+    my ($bits) = @_;
+    my $base = 3;
+    my $mod = find_prime($bits);
+    my $sa = random(rshift($mod,1), $mod-1);
+    my $sb = random(rshift($mod,1), $mod-1);
+    my $pa = pow_mod($base, $sa, $mod);
+    my $pb = pow_mod($base, $sb, $mod);
+    my $ab = pow_mod($pb, $sa, $mod);
+    my $ba = pow_mod($pa, $sb, $mod);
+
+    print "A and B agree on base $base and modulus $mod\n";
+    print "A generates secret $sa\n";
+    print "B generates secret $sb\n";
+    print "A calculates $base^$sa mod $mod = $pa and publishes it\n";
+    print "B calculates $base^$sb mod $mod = $pb and publishes it\n";
+    print "A calculates shared $pb^$sa mod $mod = $ab\n";
+    print "B calculates shared $pa^$sb mod $mod = $ba\n";
+}
+
+# -----------------------------------------------------------------
+# Standard (Luhn) credit card check digit.
+sub luhn($;$) {
+    my ($ccn, $gen) = @_;
+    my $total = 0;
+    $ccn .= '0' if $gen;
+    for (my $i = 0; $i < length($ccn); ++$i) {
+        my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
+        return undef if $digit < 0 or $digit >= 10;
+        $digit *= 2 if $i & 1;
+        $digit -= 9 if $digit > 9;
+        $total += $digit;
+    }
+    $total %= 10;
+    $total = 10 - $total if $gen and $total > 0;
+    return $total;
+}
+
+# -----------------------------------------------------------------
+# Verhoeff credit card check digit.
+sub verhoeff($;$) {
+    my ($ccn, $gen) = @_;
+    my @d = (
+        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],
+        [ 1, 2, 3, 4, 0, 6, 7, 8, 9, 5 ],
+        [ 2, 3, 4, 0, 1, 7, 8, 9, 5, 6 ],
+        [ 3, 4, 0, 1, 2, 8, 9, 5, 6, 7 ],
+        [ 4, 0, 1, 2, 3, 9, 5, 6, 7, 8 ],
+        [ 5, 9, 8, 7, 6, 0, 4, 3, 2, 1 ],
+        [ 6, 5, 9, 8, 7, 1, 0, 4, 3, 2 ],
+        [ 7, 6, 5, 9, 8, 2, 1, 0, 4, 3 ],
+        [ 8, 7, 6, 5, 9, 3, 2, 1, 0, 4 ],
+        [ 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 ],
+    );
+    my @p = (
+        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],
+        [ 1, 5, 7, 6, 2, 8, 3, 0, 9, 4 ],
+        [ 5, 8, 0, 3, 7, 9, 6, 1, 4, 2 ],
+        [ 8, 9, 1, 6, 0, 4, 3, 5, 2, 7 ],
+        [ 9, 4, 5, 3, 1, 2, 6, 8, 7, 0 ],
+        [ 4, 2, 8, 6, 5, 7, 3, 9, 0, 1 ],
+        [ 2, 7, 9, 3, 8, 0, 6, 4, 1, 5 ],
+        [ 7, 0, 4, 6, 9, 1, 3, 2, 5, 8 ],
+    );
+    my @inv = ( 0, 4, 3, 2, 1, 5, 6, 7, 8, 9 );
+
+    $ccn .= '0' if $gen;
+    my $total = 0;
+    for (my $i = 0; $i < length($ccn); ++$i) {
+        my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
+        return undef if $digit < 0 or $digit >= 10;
+        my $p = ${$p[$i % 8]}[$digit];
+        $total = ${$d[$total]}[$p];
+    }
+    $total = $inv[$total] if $gen;
+    return $total;
+}
+
+# -----------------------------------------------------------------
+# Fisher-Yates shuffle.
+sub shuffle($) {
+    my ($list) = @_;
+    for (my $i = @$list-1; $i > 0; --$i) {
+        my $j = random(0,$i);
+        ($$list[$i], $$list[$j]) = ($$list[$j], $$list[$i]);
+    }
+}
 
 # -----------------------------------------------------------------
 # ---- Encrypted Key Exchange
@@ -809,6 +908,108 @@ sub schnorr_verify($$$$$$$$) {
 #
 #
 
+
+# -----------------------------------------------------------------
+# ---- Random numbers
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+# Return random integer between $min and $max inclusive.
+# Get random bytes and do arithmetic.
+sub random($$) {
+    my ($min, $max) = @_;
+    return $min if $min >= $max;
+    my $m = $max - $min + 1;
+    my $bytes = 1 + int(log($m) / log(256));
+    my $rand = $rng->{get}($rng, $bytes);
+    my $n = 0;
+    for (my $i = 0; $i < $bytes; ++$i) {
+        $n = lshift($n,8) + ord(substr($rand,$i,1));
+    }
+    # FIXME: mod here is biased.
+    $n = ($n % $m);
+    return $min + $n;
+}
+
+# -----------------------------------------------------------------
+# Standard RNG. Uses rand().
+sub std_rng_init($;$) {
+    my ($bits, $seed) = @_;
+    if ($seed and length($seed) > 0) {
+        srand(int_from_bytes($seed, $bits));
+    }
+    return { 'get' => \&std_rng_get };
+}
+
+sub std_rng_get($$) {
+    my ($std, $bytes) = @_;
+    my $data = '';
+    while (length($data) < $bytes) {
+        $data .= chr(int(rand(0x1000000)) >> 8);
+    }
+    return $data;
+}
+
+# -----------------------------------------------------------------
+# Secure RNG. Uses Math::Random::Secure.
+sub sec_rng_init($;$) {
+    my ($bits, $seed) = @_;
+    if (not eval "require Math::Random::Secure") {
+        print "Math::Random::Secure module not found\n";
+        return undef;
+    }
+    if ($seed and length($seed) > 0) {
+        Math::Random::Secure::srand($seed);
+    }
+    return { 'get' => \&sec_rng_get };
+}
+
+sub sec_rng_get($$) {
+    my ($sec, $bytes) = @_;
+    my $data = '';
+    while (length($data) < $bytes) {
+        $data .= chr(Math::Random::Secure::irand() & 0xff);
+    }
+    return $data;
+}
+
+# -----------------------------------------------------------------
+# Blum-Blum-Shub RNG.
+sub bbs_rng_init($;$) {
+    my ($bits, $seed) = @_;
+    $seed = 1 if not $seed;
+    # BBS needs another RNG for find_prime ???
+    $rng = std_rng_init($bits, $seed) if not $rng;
+    my $rabin = rabin_gen($bits);
+    return undef if not $rabin;
+    my $rn = $rabin->{n};
+    my $x = int_from_bytes($seed, $bits) % $rn;
+    while (gcd($x, $rn) != 1) {
+        return undef if not $x;
+        --$x;
+    }
+    return { 'get' => \&bbs_rng_get, 'n' => $rn, 'x' => $x };
+}
+
+sub bbs_rng_get($$) {
+    my ($bbs, $bytes) = @_;
+    my $byte = 0;
+    my $bytebits = 0;
+    my $data = '';
+    my $n = $bbs->{n};
+    my $x = $bbs->{x};
+    while (length($data) < $bytes) {
+        $x = ($x * $x) % $n;
+        $byte = lshift($byte,1) | ($x & 1);
+        if (++$bytebits == 8) {
+            $data .= chr $byte;
+            $byte = 0;
+            $bytebits = 0;
+        }
+    }
+    $bbs->{x} = $x;
+    return $data;
+}
 
 # -----------------------------------------------------------------
 # ---- Math
@@ -974,191 +1175,33 @@ sub is_even($) {
 }
 
 # -----------------------------------------------------------------
-# Return random integer between $min and $max inclusive.
-# Get random bytes and do arithmetic.
-sub random($$) {
-    my ($min, $max) = @_;
-    return $min if $min >= $max;
-    my $m = $max - $min + 1;
-    my $bytes = 1 + int(log($m) / log(256));
-    my $rand = $rng->{get}($rng, $bytes);
-    my $n = 0;
-    for (my $i = 0; $i < $bytes; ++$i) {
-        $n = lshift($n,8) + ord(substr($rand,$i,1));
-    }
-    # FIXME: mod here is biased.
-    $n = ($n % $m);
-    return $min + $n;
+sub lshift($$) {
+    my ($n, $shift) = @_;
+    return int($n << $shift);
 }
 
 # -----------------------------------------------------------------
-# Standard RNG. Uses rand().
-sub std_rng_init($;$) {
-    my ($bits, $seed) = @_;
-    if ($seed and length($seed) > 0) {
-        srand(int_from_bytes($seed, $bits));
-    }
-    return { 'get' => \&std_rng_get };
-}
-
-sub std_rng_get($$) {
-    my ($std, $bytes) = @_;
-    my $data = '';
-    while (length($data) < $bytes) {
-        $data .= chr(int(rand(0x1000000)) >> 8);
-    }
-    return $data;
+sub rshift($$) {
+    my ($n, $shift) = @_;
+    return int($n >> $shift);
 }
 
 # -----------------------------------------------------------------
-# Secure RNG. Uses Math::Random::Secure.
-sub sec_rng_init($;$) {
-    my ($bits, $seed) = @_;
-    if (not eval "require Math::Random::Secure") {
-        print "Math::Random::Secure module not found\n";
-        return undef;
-    }
-    if ($seed and length($seed) > 0) {
-        Math::Random::Secure::srand($seed);
-    }
-    return { 'get' => \&sec_rng_get };
-}
-
-sub sec_rng_get($$) {
-    my ($sec, $bytes) = @_;
-    my $data = '';
-    while (length($data) < $bytes) {
-        $data .= chr(Math::Random::Secure::irand() & 0xff);
-    }
-    return $data;
+sub rmask($) {
+    my ($n) = @_;
+    return (lshift(1, $n) - 1);
 }
 
 # -----------------------------------------------------------------
-# Blum-Blum-Shub RNG.
-sub bbs_rng_init($;$) {
-    my ($bits, $seed) = @_;
-    $seed = 1 if not $seed;
-    $rng = std_rng_init($bits, $seed); # bizarre that BBS needs another RNG
-    my $rabin = rabin_gen($bits);
-    return undef if not $rabin;
-    my $rn = $rabin->{n};
-    my $x = int_from_bytes($seed, $bits) % $rn;
-    while (gcd($x, $rn) != 1) {
-        return undef if not $x;
-        --$x;
-    }
-    return { 'get' => \&bbs_rng_get, 'n' => $rn, 'x' => $x };
+# Make sure mod does the right thing with negative numbers.
+sub xmod($$) {
+    my ($n, $m) = @_;
+    return $n % $m if $n >= 0;
+    my $a = (int(-$n/$m)+2) * $m;
+    return ($n + $a) % $m;
 }
 
-sub bbs_rng_get($$) {
-    my ($bbs, $bytes) = @_;
-    my $byte = 0;
-    my $bytebits = 0;
-    my $data = '';
-    my $n = $bbs->{n};
-    my $x = $bbs->{x};
-    while (length($data) < $bytes) {
-        $x = ($x * $x) % $n;
-        $byte = lshift($byte,1) | ($x & 1);
-        if (++$bytebits == 8) {
-            $data .= chr $byte;
-            $byte = 0;
-            $bytebits = 0;
-        }
-    }
-    $bbs->{x} = $x;
-    return $data;
-}
 
-# -----------------------------------------------------------------
-# Diffie-Hellman key exchange
-sub dh_key_exchange($) {
-    my ($bits) = @_;
-    my $base = 3;
-    my $mod = find_prime($bits);
-    my $sa = random(rshift($mod,1), $mod-1);
-    my $sb = random(rshift($mod,1), $mod-1);
-    my $pa = pow_mod($base, $sa, $mod);
-    my $pb = pow_mod($base, $sb, $mod);
-    my $ab = pow_mod($pb, $sa, $mod);
-    my $ba = pow_mod($pa, $sb, $mod);
-
-    print "A and B agree on base $base and modulus $mod\n";
-    print "A generates secret $sa\n";
-    print "B generates secret $sb\n";
-    print "A calculates $base^$sa mod $mod = $pa and publishes it\n";
-    print "B calculates $base^$sb mod $mod = $pb and publishes it\n";
-    print "A calculates shared $pb^$sa mod $mod = $ab\n";
-    print "B calculates shared $pa^$sb mod $mod = $ba\n";
-}
-
-# -----------------------------------------------------------------
-# Standard (Luhn) credit card check digit.
-sub luhn($;$) {
-    my ($ccn, $gen) = @_;
-    my $total = 0;
-    $ccn .= '0' if $gen;
-    for (my $i = 0; $i < length($ccn); ++$i) {
-        my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
-        return undef if $digit < 0 or $digit >= 10;
-        $digit *= 2 if $i & 1;
-        $digit -= 9 if $digit > 9;
-        $total += $digit;
-    }
-    $total %= 10;
-    $total = 10 - $total if $gen and $total > 0;
-    return $total;
-}
-
-# -----------------------------------------------------------------
-# Verhoeff credit card check digit.
-sub verhoeff($;$) {
-    my ($ccn, $gen) = @_;
-    my @d = (
-        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],
-        [ 1, 2, 3, 4, 0, 6, 7, 8, 9, 5 ],
-        [ 2, 3, 4, 0, 1, 7, 8, 9, 5, 6 ],
-        [ 3, 4, 0, 1, 2, 8, 9, 5, 6, 7 ],
-        [ 4, 0, 1, 2, 3, 9, 5, 6, 7, 8 ],
-        [ 5, 9, 8, 7, 6, 0, 4, 3, 2, 1 ],
-        [ 6, 5, 9, 8, 7, 1, 0, 4, 3, 2 ],
-        [ 7, 6, 5, 9, 8, 2, 1, 0, 4, 3 ],
-        [ 8, 7, 6, 5, 9, 3, 2, 1, 0, 4 ],
-        [ 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 ],
-    );
-    my @p = (
-        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],
-        [ 1, 5, 7, 6, 2, 8, 3, 0, 9, 4 ],
-        [ 5, 8, 0, 3, 7, 9, 6, 1, 4, 2 ],
-        [ 8, 9, 1, 6, 0, 4, 3, 5, 2, 7 ],
-        [ 9, 4, 5, 3, 1, 2, 6, 8, 7, 0 ],
-        [ 4, 2, 8, 6, 5, 7, 3, 9, 0, 1 ],
-        [ 2, 7, 9, 3, 8, 0, 6, 4, 1, 5 ],
-        [ 7, 0, 4, 6, 9, 1, 3, 2, 5, 8 ],
-    );
-    my @inv = ( 0, 4, 3, 2, 1, 5, 6, 7, 8, 9 );
-
-    $ccn .= '0' if $gen;
-    my $total = 0;
-    for (my $i = 0; $i < length($ccn); ++$i) {
-        my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
-        return undef if $digit < 0 or $digit >= 10;
-        my $p = ${$p[$i % 8]}[$digit];
-        $total = ${$d[$total]}[$p];
-    }
-    $total = $inv[$total] if $gen;
-    return $total;
-}
-
-# -----------------------------------------------------------------
-# Fisher-Yates
-sub shuffle($) {
-    my ($list) = @_;
-    for (my $i = @$list-1; $i > 0; --$i) {
-        my $j = random(0,$i);
-        ($$list[$i], $$list[$j]) = ($$list[$j], $$list[$i]);
-    }
-}
 
 # -----------------------------------------------------------------
 # ---- Misc
@@ -1221,33 +1264,6 @@ sub print_map(+@) {
     foreach my $key (@_) {
         print $key, '= ', number($$map{$key}), "\n";
     }
-}
-
-# -----------------------------------------------------------------
-sub lshift($$) {
-    my ($n, $shift) = @_;
-    return int($n << $shift);
-}
-
-# -----------------------------------------------------------------
-sub rshift($$) {
-    my ($n, $shift) = @_;
-    return int($n >> $shift);
-}
-
-# -----------------------------------------------------------------
-sub rmask($) {
-    my ($n) = @_;
-    return (lshift(1, $n) - 1);
-}
-
-# -----------------------------------------------------------------
-# Make sure mod does the right thing with negative numbers.
-sub xmod($$) {
-    my ($n, $m) = @_;
-    return $n % $m if $n >= 0;
-    my $a = (int(-$n/$m)+2) * $m;
-    return ($n + $a) % $m;
 }
 
 # -----------------------------------------------------------------
