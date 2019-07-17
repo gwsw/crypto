@@ -25,8 +25,8 @@ my %all_options = (
     'hex'         => [ 'b', "Print numbers in hex." ],
     'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
     'orig-rsa'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
-    'rng'         => [ 's', "Random number generator (".join(',',keys %rngs)."). Optional bits follows colon (eg. \"bbs:64\")." ],
-    'seed'        => [ 's', "Seed string for RNG." ],
+    'rng'         => [ 's', "Random number generator (".join(',',keys %rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
+    'seed'        => [ 's', "Seed string for RNG.", \&opt_seed ],
     'slow-eg'     => [ 'b', "Don't use Lagrange Theorem shortcut to compute mult. inverse." ],
     'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
     'rand-rsa'    => [ 'b', "Use random encrytion key rather than 65537." ],
@@ -60,10 +60,11 @@ my %all_commands = (
     'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG\n" ],
     'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG\n" ],
     'schnorr-gen'     => [ \&cmd_schnorr_gen,     "BITS QBITS\n" ],
-    'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A S} MSG\n" ],
-    'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A V} E Y MSG\n" ],
+    'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG\n" ],
+    'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG\n" ],
     'option'          => [ \&cmd_option,          "[+!]OPTION[=VALUE]...\n" ],
 );
+my %set_alias = ( 'on' => 1, 'off' => 0 );
 
 # -----------------------------------------------------------------
 sub usage(;$) {
@@ -138,7 +139,22 @@ sub main {
         next if $line eq '';
         next if $line =~ /^#/;
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
-        my @args = split /\s+/, $line;
+        my @args;
+        my $quoting = 0;
+        my $qarg = '';
+        foreach my $arg (split /(\s+|")/, $line.' ') {
+            if ($arg eq '"') {
+                $quoting = not $quoting;
+                $qarg .= $arg;
+            } elsif ($quoting) {
+                $qarg .= $arg;
+            } elsif ($arg !~ /^\s*$/) {
+                $qarg .= $arg;
+            } elsif ($arg =~ /\s+/) {
+                push @args, $qarg;
+                $qarg = '';
+            }
+        }
         if (not command(@args)) {
             print "*** command failed\n";
             $ok = 0;
@@ -430,16 +446,16 @@ sub cmd_schnorr_gen {
     my $sch = schnorr_gen($bits, $qbits);
     if ($sch) {
         save_obj($sch);
-        print_map($sch, 'p','q','a','s','v');
+        print_map($sch, 'p','q','a','qbits','s','v');
     }
     return 1;
 }
 
 # -----------------------------------------------------------------
 sub cmd_schnorr_sign {
-    my ($cmd, $p,$q,$a,$s,$msg) = args(\@_, 'p','q','a','s');
+    my ($cmd, $p,$q,$a,$qbits,$s,$msg) = args(\@_, 'p','q','a','qbits','s');
     return usage($cmd) if not $msg;
-    my $sig = schnorr_sign($p,$q,$a,$s,$msg);
+    my $sig = schnorr_sign($p,$q,$a,$qbits,$s,$msg);
     if ($sig) {
         print number($$sig{e}), ' ', number($$sig{y}), "\n";
     }
@@ -448,9 +464,9 @@ sub cmd_schnorr_sign {
 
 # -----------------------------------------------------------------
 sub cmd_schnorr_verify {
-    my ($cmd, $p,$q,$a,$v,$e,$y,$msg) = args(\@_, 'p','q','a','v');
+    my ($cmd, $p,$q,$a,$qbits,$v,$e,$y,$msg) = args(\@_, 'p','q','a','qbits','v');
     return usage($cmd) if not $msg;
-    if (not schnorr_verify($p,$q,$a,$v,$e,$y,$msg)) {
+    if (not schnorr_verify($p,$q,$a,$qbits,$v,$e,$y,$msg)) {
         print "FAIL\n";
         return 0;
     }
@@ -503,19 +519,21 @@ sub cmd_option {
             $var = $2;
             $set = ($1 eq '+') ? 1 : 0;
         }
-        if ($var =~ /^ ([^=]+) = (.*)/x) { # name=value
+        if ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
             $var = $1;
             $set = $2;
-            if ($set =~ /^on$/i) { $set = 1 }
-            if ($set =~ /^off$/i) { $set = 0 }
         }
-        # Lookup option in all_options.
+        if ($var =~ /^ ([^=]+) = (.*) \s*$ /x) { # name=value
+            $var = $1;
+            $set = $2;
+        }
+        if ($set_alias{lc($set)}) { $set = $set_alias{lc($set)}; }
         my $option = $all_options{$var};
         if (not $option) {
             print "ERROR: invalid option $var\n";
             return 0;
         }
-        my ($type) = @$option;
+        my ($type, $desc, $optfunc) = @$option;
         if ($type ne 'b' and not defined $set) {
             print "ERROR: missing = after option $var\n";
             return 0;
@@ -525,16 +543,31 @@ sub cmd_option {
             print "ERROR: invalid number $value for option $var\n";
             return 0;
         }
-        if ($var eq 'rng' and not set_rng($value, $opt{seed})) {
-            print "ERROR: cannot set RNG\n";
-            return 0;
-        }
-        if ($var eq 'seed' and not set_rng($opt{rng}, $value)) {
-            print "ERROR: cannot seed RNG\n";
+        if ($optfunc and not &$optfunc($value)) {
             return 0;
         }
         $opt{$var} = $value;
         print_option($var);
+    }
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub opt_rng {
+    my ($value) = @_;
+    if (not set_rng($value, $opt{seed})) {
+        print "ERROR: cannot set RNG\n";
+        return 0;
+    }
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub opt_seed {
+    my ($value) = @_;
+    if (not set_rng($opt{rng}, $value)) {
+        print "ERROR: cannot seed RNG\n";
+        return 0;
     }
     return 1;
 }
@@ -548,6 +581,8 @@ sub print_option($) {
     print "$var = ";
     if ($type eq 'b') {
         print ($opt{$var} ? 'ON' : 'off');
+    } elsif ($type eq 's') {
+        print '"', $opt{$var}, '"';
     } else {
         print $opt{$var};
     }
@@ -716,26 +751,26 @@ sub schnorr_gen($$) {
     my ($bits, $qbits) = @_;
     # p,q,a are parameters that can be shared among different key pairs.
     my ($p,$q,$r) = find_pq_prime($bits, $qbits);
-    my $a = pow_mod(3, $r, $p);
+    my $a = pow_mod(3, $r, $p); # a has order q
     die if pow_mod($a, $q, $p) != 1;
     my $s = random(2, $q-1); # private key
     my $v = pow_mod(inv($a, $p), $s, $p); # public key
-    return { 'p' => $p, 'q' => $q, 'a' => $a, 's' => $s, 'v' => $v };
+    return { 'p' => $p, 'q' => $q, 'a' => $a, 'qbits' => $qbits, 's' => $s, 'v' => $v };
 }
 
-sub schnorr_sign($$$$$) {
-    my ($p, $q, $a, $s, $msg) = @_;
+sub schnorr_sign($$$$$$) {
+    my ($p, $q, $a, $qbits, $s, $msg) = @_;
     my $r = random(1, $q-1);
     my $x = pow_mod($a, $r, $p);
-    my $e = hash_num($msg.'+'.$x) % $q;
+    my $e = int_from_bytes($msg.'+'.$x, $qbits) % $q;
     my $y = ($r + $s*$e) % $q;
     return { 'e' => $e, 'y' => $y };
 }
 
-sub schnorr_verify($$$$$$$) {
-    my ($p, $q, $a, $v, $e, $y, $msg) = @_;
+sub schnorr_verify($$$$$$$$) {
+    my ($p, $q, $a, $qbits, $v, $e, $y, $msg) = @_;
     my $x = mul_mod(pow_mod($a, $y, $p), pow_mod($v, $e, $p), $p);
-    my $e2 = hash_num($msg.'+'.$x) % $q;
+    my $e2 = int_from_bytes($msg.'+'.$x, $qbits) % $q;
     return $e2 == $e;
 }
 
@@ -961,7 +996,7 @@ sub random($$) {
 sub std_rng_init($;$) {
     my ($bits, $seed) = @_;
     if ($seed and length($seed) > 0) {
-        srand(int_from_bytes($bits, $seed));
+        srand(int_from_bytes($seed, $bits));
     }
     return { 'get' => \&std_rng_get };
 }
@@ -1007,7 +1042,7 @@ sub bbs_rng_init($;$) {
     my $rabin = rabin_gen($bits);
     return undef if not $rabin;
     my $rn = $rabin->{n};
-    my $x = int_from_bytes($bits, $seed) % $rn;
+    my $x = int_from_bytes($seed, $bits) % $rn;
     while (gcd($x, $rn) != 1) {
         return undef if not $x;
         --$x;
@@ -1126,17 +1161,6 @@ sub shuffle($) {
 }
 
 # -----------------------------------------------------------------
-sub hash_num($) {
-    my ($str) = @_;
-    my $hash = Digest::SHA::sha256($str);
-    my $num = 0;
-    for (my $i = 0; $i < length $hash; ++$i) {
-        $num = lshift($num,8) + ord substr($hash,$i,1);
-    }
-    return $num;
-}
-
-# -----------------------------------------------------------------
 # ---- Misc
 # -----------------------------------------------------------------
 
@@ -1164,8 +1188,9 @@ sub args(+@) {
 
 # -----------------------------------------------------------------
 sub int_from_bytes($$) {
-    my ($bits, $bytes) = @_;
-    my $hash = Digest::SHA::sha256($bytes);
+    my ($data, $bits) = @_;
+    die if not $bits;
+    my $hash = Digest::SHA::sha256($data);
     my $num = 0;
     for (my $i = 0; $i < $bits; ++$i) {
         my $bit = (ord(substr($hash, int($i/8), 1)) >> ($i%8)) & 1;
