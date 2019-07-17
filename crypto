@@ -189,17 +189,30 @@ sub set_rng($$) {
 
 # -----------------------------------------------------------------
 sub command(@) {
-    my $cmd = $_[0];
-    return if not $cmd;
-    my $command = $all_commands{$cmd};
-    if (not $command) {
-        print "invalid command \"$cmd\"; use \"help\" for help\n";
-        return 1;
+    my $ret = 1;
+    while (@_) {
+        my $cmd = $_[0];
+        my $command = $all_commands{$cmd};
+        if (not $command) {
+            print "invalid command \"$cmd\"; use \"help\" for help\n";
+            return 1;
+        }
+        my $end;
+        for (my $i = 1; $i < @_; ++$i) {
+            if ($_[$i] eq ';') {
+                $end = $i;
+                last;
+            }
+        }
+        $end = @_ if not $end;
+        my @args = splice @_, 0, $end;
+        while (@_ > 0 and $_[0] eq ';') { shift @_; }
+
+        my ($handler) = @$command;
+        my $start_time = time();
+        $ret = &$handler(@args);
+        printf "=%.6f sec\n", time()-$start_time if $opt{t};
     }
-    my ($handler) = @$command;
-    my $start_time = time();
-    my $ret = &$handler(@_);
-    printf "=%.6f sec\n", time()-$start_time if $opt{t} and $ret;
     return $ret;
 }
 
@@ -517,7 +530,7 @@ sub cmd_ccn {
 sub cmd_option {
     my $cmd = shift @_;
     if (not @_) { # print all options
-        foreach my $var (keys %all_options) {
+        foreach my $var (sort keys %all_options) {
             print_option($var);
         }
         return 1;
