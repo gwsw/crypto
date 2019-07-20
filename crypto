@@ -27,8 +27,8 @@ my %all_options = (
     'hex'         => [ 'b', "Print numbers in hex." ],
     'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
     'orig-rsa'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
-    'rng'         => [ 's', "Random number generator (".join(',',keys %all_rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
-    'seed'        => [ 's', "Seed string for RNG.", \&opt_seed ],
+    'rng'         => [ 's', "Random number generator (".join(',',sort keys %all_rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
+    'seed'        => [ 's', "Seed string for RNG. \"NUM\@FILE\" to read NUM bytes from FILE.", \&opt_seed ],
     'slow-eg'     => [ 'b', "Don't use Lagrange Theorem shortcut to compute mult. inverse." ],
     'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
     'rand-rsa'    => [ 'b', "Use random encrytion key rather than 65537." ],
@@ -142,10 +142,11 @@ sub main {
         my $line = <>;
         last if not defined $line;
         $line =~ s/^\s+//;
-        $line =~ s/\s$//;
+        $line =~ s/\s+$//;
         next if $line eq '';
         next if $line =~ /^#/;
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
+        # Split line on spaces and quotes, then rejoin any quoted parts.
         my @args;
         my $quoting = 0;
         my $qarg = '';
@@ -177,6 +178,10 @@ sub set_rng($$) {
     if ($rname =~ /^([^:]+) : (\d+)/x) {
         ($rname, $bits) = ($1,$2);
     }
+    if ($seed =~ /^(\d+)\@(.+)$/) {
+        $seed = read_file($2, $1);
+print "seed=$seed\n";
+    }
     my $init = $all_rngs{$rname};
     if (not $init) {
         print "ERROR: invalid RNG \"$rname\"\n";
@@ -190,13 +195,14 @@ sub set_rng($$) {
 # -----------------------------------------------------------------
 sub command(@) {
     my $ret = 1;
-    while (@_) {
+    while (@_ and $ret) {
         my $cmd = $_[0];
         my $command = $all_commands{$cmd};
         if (not $command) {
             print "invalid command \"$cmd\"; use \"help\" for help\n";
             return 1;
         }
+        # See if there is a semicolon arg.
         my $end;
         for (my $i = 1; $i < @_; ++$i) {
             if ($_[$i] eq ';') {
@@ -206,7 +212,7 @@ sub command(@) {
         }
         $end = @_ if not $end;
         my @args = splice @_, 0, $end;
-        while (@_ > 0 and $_[0] eq ';') { shift @_; }
+        while (@_ > 0 and $_[0] eq ';') { shift @_; } # discard semicolon
 
         my ($handler) = @$command;
         my $start_time = time();
@@ -1297,3 +1303,26 @@ sub save_obj(%) {
     }
     $saved = \%new;
 }
+
+# -----------------------------------------------------------------
+sub read_file($$) {
+    my ($file, $size) = @_;
+    my $fd;
+    if (not open $fd, $file) {
+        print "ERROR: cannot open $file: $!\n";
+        return '';
+    }
+    my $data;
+    my $nread = read($fd, $data, $size);
+    close $fd;
+    if ($nread != $size) {
+        print "ERROR: read $nread / $size from $file\n";
+        return '';
+    }
+    my $hexdata;
+    for (my $i = 0; $i < length $data; ++$i) {
+        $hexdata .= sprintf '%02x', ord substr($data,$i,1);
+    }
+    return $hexdata;
+}
+
