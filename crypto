@@ -25,6 +25,7 @@ my %all_rngs = (
 
 my %all_options = (
     'hex'         => [ 'b', "Print numbers in hex." ],
+    'perf'        => [ 'b', "Print performance stats." ],
     'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
     'orig-rsa'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
     'rng'         => [ 's', "Random number generator (".join(',',sort keys %all_rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
@@ -37,6 +38,11 @@ my %all_options = (
 );
 
 my %all_commands = (
+    'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S" ],
+    'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG" ],
+    'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
+    'eg-sign'         => [ \&cmd_eg_sign,         "   {P G X} MSG" ],
+    'eg-verify'       => [ \&cmd_eg_verify,       " {P G Y} R S MSG" ],
     'euclid'          => [ \&cmd_euclid,          "NUM1 NUM2" ],
     'exp'             => [ \&cmd_exp,             "BASE EXP MOD" ],
     'find-prime'      => [ \&cmd_find_prime,      "BITS" ],
@@ -47,25 +53,20 @@ my %all_commands = (
     'kx'              => [ \&cmd_kx,              "BITS" ],
     'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2" ],
     'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
+    'option'          => [ \&cmd_option,          "[+!]OPTION[=VALUE]..." ],
+    'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
+    'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG" ],
+    'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS" ],
     'random'          => [ \&cmd_random,          "MIN MAX" ],
     'random-bytes'    => [ \&cmd_random_bytes,    "BYTES" ],
-    'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
-    'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
-    'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
-    'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
-    'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
-    'eg-sign'         => [ \&cmd_eg_sign,         "   {P G X} MSG" ],
-    'eg-verify'       => [ \&cmd_eg_verify,       " {P G Y} R S MSG" ],
-    'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG" ],
-    'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S" ],
-    'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS" ],
-    'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG" ],
-    'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
+    'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
+    'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
     'schnorr-gen'     => [ \&cmd_schnorr_gen,     "BITS QBITS" ],
     'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG" ],
     'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG" ],
-    'option'          => [ \&cmd_option,          "[+!]OPTION[=VALUE]..." ],
+    'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
+    'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
 );
 
 
@@ -75,12 +76,13 @@ my %all_commands = (
 # cmd = ''      : Print usage for all commands.
 # cmd = 'shell' : Print usage for command line and all commands.
 sub usage(;$) {
-    my ($acmd) = @_;
-    my $cmd = $acmd;
+    my ($cmd) = @_;
+    my $opts_prt = 0;
     if ($cmd eq 'shell') {
-        $cmd = '';
         print "usage: crypto [options] [command args...[';' command args...]...]\n";
         usage_options(1);
+        $opts_prt = 1;
+        $cmd = '';
     }
     if (not $cmd) {
         print "commands: (values in {} may be '-' if preceded by *-gen)\n";
@@ -88,7 +90,7 @@ sub usage(;$) {
             my $command = $all_commands{$wcmd};
             my ($handler, $args) = @$command;
             print "  $wcmd $args\n";
-            usage_options(0) if $wcmd eq 'option' and $acmd ne 'shell';
+            usage_options(0) if $wcmd eq 'option' and not $opts_prt;
         }
     } else {
         my $command = $all_commands{$cmd};
@@ -141,10 +143,10 @@ sub main {
         printf "> " unless $opt{'no-prompt'};
         my $line = <>;
         last if not defined $line;
-        $line =~ s/^\s+//;
-        $line =~ s/\s+$//;
-        next if $line eq '';
-        next if $line =~ /^#/;
+        $line =~ s/^\s+//; # rm leading space
+        $line =~ s/\s+$//; # rm trailing space
+        next if $line eq ''; # ignore empty line
+        next if $line =~ /^#/; # ignore comment
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
         # Split line on spaces and quotes, then rejoin any quoted parts.
         my @args;
@@ -154,7 +156,7 @@ sub main {
             if ($arg eq '"') {
                 $quoting = not $quoting;
                 $qarg .= $arg;
-            } elsif ($quoting) {
+            } elsif ($quoting) { # even if $arg =~ /^\s+/
                 $qarg .= $arg;
             } elsif ($arg !~ /^\s*$/) {
                 $qarg .= $arg;
@@ -175,21 +177,22 @@ sub main {
 sub set_rng($$) {
     my ($rname, $seed) = @_;
     my $bits = $rng_bits_default;
-    if ($rname =~ /^([^:]+) : (\d+)/x) {
+    if ($rname =~ /^([^:]+) : (\d+)$/x) {
         ($rname, $bits) = ($1,$2);
     }
     if ($seed =~ /^(\d+)\@(.+)$/) {
         $seed = read_file($2, $1);
-print "seed=$seed\n";
+        return 0 if not defined $seed;
     }
-    my $init = $all_rngs{$rname};
-    if (not $init) {
+    my $rng_init = $all_rngs{$rname};
+    if (not $rng_init) {
         print "ERROR: invalid RNG \"$rname\"\n";
-        return undef;
+        return 0;
     }
-    my $new_rng = &$init($bits, $seed);
-    $rng = $new_rng if $new_rng;
-    return $new_rng;
+    my $new_rng = &$rng_init($bits, $seed);
+    return 0 if not $new_rng;
+    $rng = $new_rng;
+    return 1;
 }
 
 # -----------------------------------------------------------------
@@ -200,24 +203,22 @@ sub command(@) {
         my $command = $all_commands{$cmd};
         if (not $command) {
             print "invalid command \"$cmd\"; use \"help\" for help\n";
-            return 1;
+            last;
         }
         # See if there is a semicolon arg.
         my $end;
-        for (my $i = 1; $i < @_; ++$i) {
-            if ($_[$i] eq ';') {
-                $end = $i;
+        for ($end = 1; $end < @_; ++$end) {
+            if ($_[$end] eq ';') {
                 last;
             }
         }
-        $end = @_ if not $end;
         my @args = splice @_, 0, $end;
-        while (@_ > 0 and $_[0] eq ';') { shift @_; } # discard semicolon
+        while (@_ > 0 and $_[0] eq ';') { shift @_; } # discard semicolon(s)
 
         my ($handler) = @$command;
         my $start_time = time();
-        $ret = &$handler(@args);
-        printf "=%.6f sec\n", time()-$start_time if $opt{t};
+        $ret = &$handler(@args); # run the cmd
+        printf "=%.6f sec\n", time()-$start_time if $opt{perf};
     }
     return $ret;
 }
@@ -237,8 +238,10 @@ sub cmd_euclid {
     my ($w,$x,$a,$b,$gcd,$k) = euclid($u, $v);
     my $ngcd = number($gcd);
     print $ngcd, ' = ', number($a), ' * ', number($w), ' - ', number($b), ' * ', number($x), "\n";
-    print (' ' x length($ngcd));
-    print ' = (', number($a), '>>', number($k), ') * ', number($u), ' - (', number($b), '>>', number($k), ') * ', number($v), "\n";
+    if ($k > 0) {
+        print (' ' x length($ngcd));
+        print ' = (', number($a), '>>', number($k), ') * ', number($u), ' - (', number($b), '>>', number($k), ') * ', number($v), "\n";
+    }
     if ($gcd == 1) {
         print number($x), '^-1 mod ', number($w), ' = ', number($w-$b), "\n";
     }
@@ -1127,8 +1130,8 @@ sub find_pq_prime($$) {
 # -----------------------------------------------------------------
 # Extended Euclidean algorithm.
 # euclid(u,v) returns (w,x,a,b,g,k) such that
-#   w = u>>k, x = v>>k, , u = w<<k, v = x<<k, w,x not both even
-#   g = gcd(u,v) = a*w - b*x = (a>>k)*u - (b>>k)*v
+#   w = u>>k, x = v>>k, w,x not both even
+#   g = gcd(u,v) = a*w - b*x = (a*u - b*v) >>k
 sub euclid($$) {
     my ($u, $v) = @_;
     if ($u < $v) { ($u,$v) = ($v,$u); }
@@ -1273,7 +1276,7 @@ sub i($) {
 # -----------------------------------------------------------------
 sub number($) {
     my ($n) = @_;
-    return $n->as_hex() if $opt{x};
+    return $n->as_hex() if $opt{hex};
     return $n;
 }
 
