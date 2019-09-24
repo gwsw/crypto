@@ -1,0 +1,69 @@
+#!/usr/bin/perl
+use strict;
+
+my $def_lpw = 6;
+my $def_len = 10;
+my $def_key = chr(0) x 64;
+
+my $usage = "usage: ans [-k str] [-n#] [-p] [-w#] [query]\n".
+            "       -k Key string (may use \"\\x##\" hex sequences) (default ".length($def_key)." zeros)\n".
+            "       -n Chars in answer; should be even (default $def_len)\n".
+            "       -p Do not prompt when reading query from stdin\n".
+            "       -w Letters per word. 0 = no word divisions (default $def_lpw)\n";
+
+use Getopt::Std;
+my %opt;
+
+# -----------------------------------------------------------------
+main();
+sub main {
+    die $usage if not getopts('k:n:puw:', \%opt);
+    my $query = join ' ', @ARGV;
+    if (not defined $query) {
+        print '>' unless $opt{p};
+        $query = <>;
+        chomp $query;
+    }
+    my $len = ($opt{n} or $def_len);
+    my $key = $def_key;
+    if ($opt{k}) {
+        $key = $opt{k};
+        $key =~ s/\\x([\da-f][\d-af])/chr(hex($1))/eg; # Convert "\xNN" to char with that value
+    }
+    my $lpw = (defined $opt{w}) ? $opt{w} : $def_lpw;
+    print ans($query, $len, $key, $lpw), "\n";
+}
+
+# -----------------------------------------------------------------
+# Each 2-char syllable is created from one byte of a hash value.
+# The hash value is derived from the key k and query q:
+# for i < hash.len, the hash used is H0 = sha(k|q).
+# for i < 2*hash.len, the hash used is H1 = sha(k|H0)
+# for i < 3*hash.len, the hash used is H2 = sha(k|H1)
+# etc.
+use Digest::SHA;
+
+sub ans {
+    my ($query, $len, $key, $lpw) = @_;
+    my $lps   = 2; # letters per syllable
+    my $cons  = 'bdfghkmprstvwxy';
+    my $vowel = 'aeou';
+    $lpw -= $lpw % $lps; # make lpw multiple of lps
+
+    my $hx = 0;
+    my $ans = '';
+    my $hash = Digest::SHA::sha256($key.'|'.$query);
+    for (my $ax = 0; $ax < $len; $ax += $lps) {
+        if ($hx >= length($hash)) {
+            $hash = Digest::SHA::sha256($key.'|'.$hash);
+            $hx = 0;
+        }
+        # Generate syllable (cons+vowel) from one byte of hash
+        my $num = ord(substr($hash, $hx++, 1));
+        $ans .= substr($cons, $num % length($cons), 1);
+        $ans .= substr($vowel, ($num / length($cons)) % length($vowel), 1) if $ax+1 < $len;
+        # Add space if current word has $lpw letters and we're not at end of output.
+        $ans .= ' ' if $lpw >= $lps and $ax % $lpw == $lpw - $lps and $ax + $lps < $len;
+    }
+    return $ans;
+}
