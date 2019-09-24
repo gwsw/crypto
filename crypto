@@ -49,10 +49,12 @@ my %all_commands = (
     'help'            => [ \&cmd_help,            "[command]" ],
     'inv'             => [ \&cmd_inv,             "NUM MOD" ],
     'is-prime'        => [ \&cmd_is_prime,        "NUM" ],
+    'isort'           => [ \&cmd_sort,            "NUM..." ],
     'kx'              => [ \&cmd_kx,              "BITS" ],
     'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2" ],
     'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
     'mul'             => [ \&cmd_mul,             "N1 N2 MOD" ],
+    'msort'           => [ \&cmd_sort,            "NUM..." ],
     'option'          => [ \&cmd_option,          "[+!]OPTION[=VALUE]..." ],
     'pow'             => [ \&cmd_pow,             "BASE EXP MOD" ],
     'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
@@ -63,6 +65,7 @@ my %all_commands = (
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
     'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
     'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
+    'qsort'           => [ \&cmd_sort,            "NUM..." ],
     'schnorr-gen'     => [ \&cmd_schnorr_gen,     "BITS QBITS" ],
     'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG" ],
     'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG" ],
@@ -346,6 +349,19 @@ sub cmd_shuffle {
     my @nums = 1 .. $num;
     shuffle(\@nums);
     print join(' ', @nums), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_sort {
+    my ($cmd, @list) = args(\@_);
+    return usage($cmd) if not @list;
+    my @sorted =
+        ($cmd eq 'isort') ? insert_sort(@list) :
+        ($cmd eq 'msort') ? merge_sort(@list) :
+        ($cmd eq 'qsort') ? quick_sort(@list) :
+        ();
+    print join(' ', @sorted), "\n";
     return 1;
 }
 
@@ -904,6 +920,72 @@ sub verhoeff($;$) {
     }
     $total = $inv[$total] if $gen;
     return $total;
+}
+
+# -----------------------------------------------------------------
+# ---- Sort
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub insert_sort(@) {
+    my @sorted;
+    for (;;) {
+        my $item = shift @_;
+        last if not defined $item;
+        for (my $i = 0; $i <= @sorted; ++$i) {
+            if ($i == @sorted or $item <= $sorted[$i]) {
+                splice @sorted, $i, 0, $item;
+                last;
+            }
+        }
+    }
+    return @sorted;
+}
+
+# -----------------------------------------------------------------
+sub merge_sort(@) {
+    my $len = scalar @_;
+    return @_ if $len < 2;
+    $len = int($len/2);
+    my @sub1 = merge_sort(splice(@_, 0, $len));
+    my @sub2 = merge_sort(@_);
+    my @sorted;
+    while (@sub1 > 0 and @sub2 > 0) {
+        if ($sub1[0] < $sub2[0]) {
+            push @sorted, shift @sub1;
+        } else {
+            push @sorted, shift @sub2;
+        }
+    }
+    if (@sub1 > 0) {
+        push @sorted, @sub1;
+    } elsif (@sub2 > 0) {
+        push @sorted, @sub2;
+    }
+    return @sorted;
+}
+
+# -----------------------------------------------------------------
+sub quick_sort(@) {
+    quick_sort_range(0, @_-1, @_);
+    return @_;
+}
+
+sub quick_sort_range($$@) {
+    my $lo = shift @_;
+    my $hi = shift @_;
+    return if $lo >= $hi;
+    my $pivot = $_[int(($hi+$lo)/2)];
+    my $plo = $lo-1;
+    my $phi = $hi+1;
+    for (;;) {
+        do { ++$plo; } while $_[$plo] < $pivot;
+        do { --$phi; } while $_[$phi] > $pivot;
+        last if $plo >= $phi;
+        ($_[$plo], $_[$phi]) = ($_[$phi], $_[$plo]);
+    }
+    quick_sort_range($lo, $phi, @_);
+    quick_sort_range($phi+1, $hi, @_);
 }
 
 # -----------------------------------------------------------------
