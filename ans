@@ -46,8 +46,8 @@ use Digest::SHA;
 sub ans {
     my ($query, $len, $key, $lpw) = @_;
     my $lps   = 2; # letters per syllable
-    my $cons  = 'bdfghkmprstvwxy';
-    my $vowel = 'aeou';
+    my $cons  = 'bdfghkmprstvwyz';
+    my $vowel = 'aeio';
     $lpw -= $lpw % $lps; # make lpw multiple of lps
 
     my $hx = 0;

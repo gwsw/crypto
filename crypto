@@ -21,6 +21,7 @@ my %all_rngs = (
     'std' => \&std_rng_init, 
     'sec' => \&sec_rng_init, 
     'bbs' => \&bbs_rng_init, 
+    'sim' => \&sim_rng_init, 
 );
 
 my %all_options = (
@@ -41,8 +42,8 @@ my %all_commands = (
     'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S" ],
     'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG" ],
     'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
-    'eg-sign'         => [ \&cmd_eg_sign,         "   {P G X} MSG" ],
-    'eg-verify'       => [ \&cmd_eg_verify,       " {P G Y} R S MSG" ],
+    'eg-sign'         => [ \&cmd_eg_sign,         "{P G X} MSG" ],
+    'eg-verify'       => [ \&cmd_eg_verify,       "{P G Y} R S MSG" ],
     'euclid'          => [ \&cmd_euclid,          "NUM1 NUM2" ],
     'find-prime'      => [ \&cmd_find_prime,      "BITS" ],
     'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2" ],
@@ -50,6 +51,7 @@ my %all_commands = (
     'inv'             => [ \&cmd_inv,             "NUM MOD" ],
     'is-prime'        => [ \&cmd_is_prime,        "NUM" ],
     'isort'           => [ \&cmd_sort,            "NUM..." ],
+    'ibsort'          => [ \&cmd_sort,            "NUM..." ],
     'kx'              => [ \&cmd_kx,              "BITS" ],
     'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2" ],
     'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
@@ -59,7 +61,9 @@ my %all_commands = (
     'pow'             => [ \&cmd_pow,             "BASE EXP MOD" ],
     'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
     'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG" ],
-    'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS" ],
+    'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS [SIGN_NONCE_BITS]" ],
+    'rabin-sign'      => [ \&cmd_rabin_sign,      "{P Q N BITS SIGN_NONCE_BITS} MSG" ],
+    'rabin-verify'    => [ \&cmd_rabin_verify,    "{N BITS} U X MSG" ],
     'random'          => [ \&cmd_random,          "MIN MAX" ],
     'random-bytes'    => [ \&cmd_random_bytes,    "BYTES" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
@@ -158,18 +162,18 @@ sub main {
         # Split line on spaces and quotes, then rejoin any quoted parts.
         my @args;
         my $quoting = 0;
-        my $qarg = '';
+        my $word = '';
         foreach my $arg (split /(\s+|")/, $line.' ') {
             if ($arg eq '"') {
                 $quoting = not $quoting;
-                $qarg .= $arg;
-            } elsif ($quoting) { # even if $arg =~ /^\s+/
-                $qarg .= $arg;
-            } elsif ($arg !~ /^\s*$/) {
-                $qarg .= $arg;
-            } elsif ($arg =~ /\s+/) {
-                push @args, $qarg;
-                $qarg = '';
+                $word .= $arg; # add quote to word
+            } elsif ($quoting) { # add everything to arg while quoting
+                $word .= $arg;
+            } elsif ($arg !~ /^\s*$/) { # add nonspace string to word
+                $word .= $arg; 
+            } elsif ($arg =~ /\s+/) { # space = end of word
+                push @args, $word;
+                $word = '';
             }
         }
         if (not command(@args)) {
@@ -184,12 +188,13 @@ sub main {
 sub set_rng($$) {
     my ($rname, $seed) = @_;
     my $bits = $rng_bits_default;
-    if ($rname =~ /^([^:]+) : (\d+)$/x) {
+    if ($rname =~ /^ ([^:]+) : (\d+)$ /x) {
         ($rname, $bits) = ($1,$2);
     }
-    if ($seed =~ /^(\d+)\@(.+)$/) {
+    if ($seed =~ /^(\d{1,12})\@(\S+)$/) {
         $seed = read_file($2, $1);
         return 0 if not defined $seed;
+        print "seed from $2: "; print_bin($seed); print "\n";
     }
     my $rng_init = $all_rngs{$rname};
     if (not $rng_init) {
@@ -199,6 +204,7 @@ sub set_rng($$) {
     my $new_rng = &$rng_init($bits, $seed);
     return 0 if not $new_rng;
     $rng = $new_rng;
+    ##print "RNG: $rname:$bits\n";
     return 1;
 }
 
@@ -228,6 +234,13 @@ sub command(@) {
         printf "=%.6f sec\n", time()-$start_time if $opt{perf};
     }
     return $ret;
+}
+
+# -----------------------------------------------------------------
+sub cmd_fail($) {
+    my ($cmd) = @_;
+    print "$cmd failed\n";
+    return 0;
 }
 
 # -----------------------------------------------------------------
@@ -331,13 +344,8 @@ sub cmd_random_bytes {
     my ($cmd, $bytes) = args(\@_);
     return usage($cmd) if not $bytes;
     my $data = $rng->{get}($rng, $bytes);
-    if (not $data) {
-        print "RNG failed\n";
-        return 0;
-    }
-    for (my $i = 0; $i < length $data; ++$i) {
-        printf "%02x ", ord substr($data,$i,1);
-    }
+    return cmd_fail('RNG') if not $data;
+    print_bin($data);
     print "\n";
     return 1;
 }
@@ -357,7 +365,8 @@ sub cmd_sort {
     my ($cmd, @list) = args(\@_);
     return usage($cmd) if not @list;
     my @sorted =
-        ($cmd eq 'isort') ? insert_sort(@list) :
+        ($cmd eq 'isort') ? insertl_sort(@list) :
+        ($cmd eq 'ibsort') ? insertb_sort(@list) :
         ($cmd eq 'msort') ? merge_sort(@list) :
         ($cmd eq 'qsort') ? quick_sort(@list) :
         ();
@@ -412,9 +421,8 @@ sub cmd_eg_sign {
     my ($cmd, $p,$g,$x,$msg) = args(\@_, 'p','g','x');
     return usage($cmd) if not $msg;
     my $sig = eg_sign($p,$g,$x,$msg);
-    if ($sig) {
-        print number($$sig{r}), ' ', number($$sig{s}), "\n";
-    }
+    return cmd_fail('sign') if not defined $sig;
+    print number($$sig{r}), ' ', number($$sig{s}), "\n";
     return 1;
 }
 
@@ -422,10 +430,7 @@ sub cmd_eg_sign {
 sub cmd_eg_verify {
     my ($cmd, $p,$g,$y,$r,$s,$msg) = args(\@_, 'p','g','y');
     return usage($cmd) if not $s;
-    if (not eg_verify($p,$g,$y,$r,$s,$msg)) {
-        print "FAIL\n";
-        return 0;
-    }
+    return cmd_fail('verify') if not eg_verify($p,$g,$y,$r,$s,$msg);
     print "ok\n";
     return 1;
 }
@@ -435,9 +440,8 @@ sub cmd_eg_encrypt {
     my ($cmd, $p,$g,$y,$msg) = args(\@_, 'p','g','y');
     return usage($cmd) if not $msg;
     my $enc = eg_encrypt($p,$g,$y,$msg);
-    if ($enc) {
-        print number($$enc{r}), ' ', number($$enc{s}), "\n";
-    }
+    return cmd_fail('encrypt') if not defined $enc;
+    print number($$enc{r}), ' ', number($$enc{s}), "\n";
     return 1;
 }
 
@@ -446,18 +450,17 @@ sub cmd_eg_decrypt {
     my ($cmd, $p,$g,$x,$r,$s) = args(\@_, 'p','g','x');
     return usage($cmd) if not $s;
     my $msg = eg_decrypt($p,$g,$x,$r,$s);
-    if ($msg) {
-        print number($msg), "\n";
-    }
+    return cmd_fail('decrypt') if not defined $msg;
+    print number($msg), "\n";
     return 1;
 }
 
 # -----------------------------------------------------------------
 sub cmd_rabin_gen {
-    my ($cmd, $bits) = args(\@_);
+    my ($cmd, $bits, $sign_nonce_bits) = args(\@_);
     return usage($cmd) if not $bits;
     $bits += $opt{'rabin-shift'} if not $opt{'rabin-raw'};
-    my $rabin = rabin_gen($bits);
+    my $rabin = rabin_gen($bits, $sign_nonce_bits);
     if ($rabin) {
         save_obj($rabin);
         print_map($rabin, 'p','q','n');
@@ -471,7 +474,7 @@ sub cmd_rabin_encrypt {
     return usage($cmd) if not $n or not defined $msg;
     # Use N low order zero bits to distinguish between 4 posssible decryptions.
     $msg = lshift($msg, $opt{'rabin-shift'}) if not $opt{'rabin-raw'};
-    my $enc = rabin_encrypt($msg, $n);
+    my $enc = rabin_encrypt($n, $msg);
     if ($enc) {
         print number($enc), "\n";
     }
@@ -483,22 +486,40 @@ sub cmd_rabin_decrypt {
     my ($cmd, $p,$q,$n,$enc) = args(\@_, 'p','q','n');
     return usage($cmd) if not $p or not $q or not defined $enc;
     # Look for the correct decryption among the 4.
-    my $decs = rabin_decrypt($enc, $p, $q, $n);
-    if (not $decs) { 
-        print "decrypt failed\n";
-    } else {
-        foreach my $m (@$decs) {
-            if ($opt{'rabin-raw'}) { # just print them all.
-                print number($m), "\n";
-            } elsif (($m & rmask($opt{'rabin-shift'})) == 0) {
-                # Found one with N low order zero bits.
-                # It might be the right decryption (or we might be very unlucky).
-                print number(rshift($m, $opt{'rabin-shift'})), "\n";
-            }
+    my @decs = rabin_decrypt($p, $q, $n, $enc);
+    return cmd_fail('decrypt') if not @decs;
+
+    foreach my $m (@decs) {
+        if ($opt{'rabin-raw'}) { # just print them all.
+            print number($m), "\n";
+        } elsif (($m & rmask($opt{'rabin-shift'})) == 0) {
+            # Found one with N low order zero bits.
+            # It might be the right decryption (or we might be very unlucky).
+            print number(rshift($m, $opt{'rabin-shift'})), "\n";
         }
     }
     return 1;
 }
+
+# -----------------------------------------------------------------
+sub cmd_rabin_sign {
+    my ($cmd, $p,$q,$n,$bits,$sign_nonce_bits, $msg) = args(\@_, 'p','q','n','bits','sign_nonce_bits');
+    return usage($cmd) if not $msg;
+    my $sig = rabin_sign($p, $q, $n, $bits, $sign_nonce_bits, $msg);
+    return cmd_fail('sign') if not $sig;
+    print number($$sig{u}), ' ', number($$sig{x}), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_rabin_verify {
+    my ($cmd, $n,$bits,$u,$x, $msg) = args(\@_, 'n','bits');
+    return usage($cmd) if not $msg;
+    return cmd_fail('verify') if not rabin_verify($n,$bits,$u,$x,$msg);
+    print "ok\n";
+    return 1;
+}
+
 
 # -----------------------------------------------------------------
 sub cmd_schnorr_gen {
@@ -527,10 +548,7 @@ sub cmd_schnorr_sign {
 sub cmd_schnorr_verify {
     my ($cmd, $p,$q,$a,$qbits,$v,$e,$y,$msg) = args(\@_, 'p','q','a','qbits','v');
     return usage($cmd) if not $msg;
-    if (not schnorr_verify($p,$q,$a,$qbits,$v,$e,$y,$msg)) {
-        print "FAIL\n";
-        return 0;
-    }
+    return cmd_fail('verify') if not schnorr_verify($p,$q,$a,$qbits,$v,$e,$y,$msg);
     print "ok\n";
     return 1;
 }
@@ -609,7 +627,7 @@ sub cmd_option {
             print "ERROR: invalid boolean '$value' for option $var (use 0,1 or on,off)\n";
             return 0;
         }
-        if ($optfunc and not &$optfunc($value)) {
+        if ($optfunc and not &$optfunc($value)) { # call option handler, if any
             return 0;
         }
         $opt{$var} = $value;
@@ -766,18 +784,20 @@ sub rsa_crypt($$$) {
 
 # -----------------------------------------------------------------
 sub rabin_gen($) {
-    my ($bits) = @_;
+    my ($bits, $sign_nonce_bits) = @_;
     return undef if not $bits;
+    $sign_nonce_bits = 0 if not $sign_nonce_bits;
     my $bits2 = rshift($bits, 1);
-    my $p = find_blum_prime($bits2);
+    my $p = find_blum_prime($bits-$bits2);
     my $q = find_blum_prime($bits2);
     if ($p < $q) { ($p,$q) = ($q,$p); }
-    return { 'p' => $p, 'q' => $q, 'n' => $p*$q };
+    # Note n may be $bits-1 bits due to multiply.
+    return { 'p' => $p, 'q' => $q, 'n' => $p*$q, 'bits' => $bits, 'sign_nonce_bits' => $sign_nonce_bits };
 }
 
 # -----------------------------------------------------------------
 sub rabin_encrypt($$) {
-    my ($msg, $n) = @_;
+    my ($n, $msg) = @_;
     return undef if msg_too_large($msg, $n);
     return mul_mod($msg, $msg, $n);
 }
@@ -785,8 +805,8 @@ sub rabin_encrypt($$) {
 # -----------------------------------------------------------------
 # Returns four possible decryptions.
 sub rabin_decrypt($$$$) {
-    my ($enc, $p, $q, $n) = @_;
-    return undef if msg_too_large($enc, $n);
+    my ($p, $q, $n, $enc) = @_;
+    return () if msg_too_large($enc, $n);
     # Find modular square root of enc, mod p and q.
     # That is, (mp*mp % p) = enc, and (mq*mq % q) = enc.
     my $mp = pow_mod($enc, rshift($p+1,2), $p);
@@ -804,8 +824,36 @@ sub rabin_decrypt($$$$) {
     my $r3 = $n - $r1;
     my $r4 = $n - $r2;
 
-    my @r = ($r1, $r2, $r3, $r4);
-    return \@r;
+    return ($r1, $r2, $r3, $r4);
+}
+
+# -----------------------------------------------------------------
+sub rabin_sign($$$) {
+    my ($p, $q, $n, $bits, $sign_nonce_bits, $msg) = @_;
+    return undef if $bits < 3 or not $sign_nonce_bits;
+    for (my $tries = 0;; ++$tries) { # expected number of tries is 4
+        my $umax = lshift(1, $sign_nonce_bits);
+        my $u = random(rshift($umax,1), $umax-1);
+        my $c = rabin_msg($msg, $u, $bits);
+        my @xs = rabin_decrypt($p, $q, $n, $c);
+        next if not @xs;
+        my $x = shift @xs;
+        return { 'u'=>$u, 'x'=>$x } if rabin_encrypt($n, $x) == $c;
+    }
+}
+
+# -----------------------------------------------------------------
+sub rabin_verify($$$$$) {
+    my ($n, $bits, $u, $x, $msg) = @_;
+    my $c = rabin_msg($msg, $u, $bits);
+    return rabin_encrypt($n, $x) == $c;
+}
+
+# -----------------------------------------------------------------
+sub rabin_msg($$$) {
+    my ($msg, $u, $bits) = @_;
+    # Must be less than n, which may be bits-1, so make this bits-2.
+    return int_from_bytes($msg.'+'.$u, $bits-2);
 }
 
 # -----------------------------------------------------------------
@@ -914,7 +962,7 @@ sub verhoeff($;$) {
     my $total = 0;
     for (my $i = 0; $i < length($ccn); ++$i) {
         my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
-        return undef if $digit < 0 or $digit >= 10;
+        return undef if $digit < 0 or $digit > 9;
         my $p = ${$p[$i % 8]}[$digit];
         $total = ${$d[$total]}[$p];
     }
@@ -927,17 +975,38 @@ sub verhoeff($;$) {
 # -----------------------------------------------------------------
 
 # -----------------------------------------------------------------
-sub insert_sort(@) {
+# Insertion sort with linear search.
+sub insertl_sort(@) {
     my @sorted;
     for (;;) {
         my $item = shift @_;
         last if not defined $item;
-        for (my $i = 0; $i <= @sorted; ++$i) {
-            if ($i == @sorted or $item <= $sorted[$i]) {
-                splice @sorted, $i, 0, $item;
-                last;
+        my $ins = 0;
+        while ($ins < @sorted and $item > $sorted[$ins]) {
+            ++$ins;
+        }
+        splice @sorted, $ins, 0, $item;
+    }
+    return @sorted;
+}
+
+# -----------------------------------------------------------------
+# Insertion sort with binary search.
+sub insertb_sort(@) {
+    my @sorted;
+    for (;;) {
+        my $item = shift @_;
+        last if not defined $item;
+        my ($lo,$hi) = (0,0);
+        for (($lo,$hi) = (0, scalar @sorted); $lo < $hi;) {
+            my $mid = rshift($lo + $hi, 1);
+            if ($sorted[$mid] < $item) {
+                $lo = $mid + 1;
+            } else {
+                $hi = $mid;
             }
         }
+        splice @sorted, $lo, 0, $item;
     }
     return @sorted;
 }
@@ -957,35 +1026,33 @@ sub merge_sort(@) {
             push @sorted, shift @sub2;
         }
     }
-    if (@sub1 > 0) {
-        push @sorted, @sub1;
-    } elsif (@sub2 > 0) {
-        push @sorted, @sub2;
-    }
+    push @sorted, @sub1;
+    push @sorted, @sub2;
     return @sorted;
 }
 
 # -----------------------------------------------------------------
 sub quick_sort(@) {
-    quick_sort_range(0, @_-1, @_);
+    quick_sort_range(0, @_-1, \@_);
     return @_;
 }
 
-sub quick_sort_range($$@) {
-    my $lo = shift @_;
-    my $hi = shift @_;
+sub quick_sort_range($$$) {
+    my ($lo, $hi, $arr) = @_;
     return if $lo >= $hi;
-    my $pivot = $_[int(($hi+$lo)/2)];
+    #my $pivot = $$arr[int(($hi+$lo)/2)];
+    #my $pivot = int(($$arr[$lo] + $$arr[$hi] + $$arr[int(($hi+$lo)/2)]) / 3);
+    my $pivot = int(($$arr[$lo] + $$arr[$hi]) / 2);
     my $plo = $lo-1;
     my $phi = $hi+1;
     for (;;) {
-        do { ++$plo; } while $_[$plo] < $pivot;
-        do { --$phi; } while $_[$phi] > $pivot;
+        do { ++$plo; } while $$arr[$plo] < $pivot;
+        do { --$phi; } while $$arr[$phi] > $pivot;
         last if $plo >= $phi;
-        ($_[$plo], $_[$phi]) = ($_[$phi], $_[$plo]);
+        ($$arr[$plo], $$arr[$phi]) = ($$arr[$phi], $$arr[$plo]);
     }
-    quick_sort_range($lo, $phi, @_);
-    quick_sort_range($phi+1, $hi, @_);
+    quick_sort_range($lo, $phi, $arr);
+    quick_sort_range($phi+1, $hi, $arr);
 }
 
 # -----------------------------------------------------------------
@@ -1078,6 +1145,20 @@ sub std_rng_init($;$) {
 sub std_rng_get_byte($) {
     my ($std) = @_;
     return (int(rand(0x1000000)) >> 8) & 0xff;
+}
+
+# -----------------------------------------------------------------
+# Simple RNG.
+sub sim_rng_init($;$) {
+    my ($bits, $seed) = @_;
+    my $iseed = ($seed and length($seed) > 0) ? int_from_bytes($seed, 32) : 0;
+    return { 'get' => \&get_bytes, 'get_byte' => \&sim_rng_get_byte, 'seed' => $iseed };
+}
+
+sub sim_rng_get_byte($) {
+    my ($sim) = @_;
+    $sim->{seed} = (($sim->{seed} * 1664525) + 1013904223) & 0xFFFFFFFF;
+    return rshift($sim->{seed}, 24);
 }
 
 # -----------------------------------------------------------------
@@ -1284,7 +1365,19 @@ sub lcm($$) {
     my ($u, $v) = @_;
     my $gcd = gcd($u, $v);
     return undef if not $gcd;
-    return new Math::BigInt(($u * $v) / $gcd); # Makes a BigFloat without this nonsense!
+    return ($u * $v)->bdiv($gcd);
+}
+
+# -----------------------------------------------------------------
+# Euler's criterion
+sub is_quad_residue($$) {
+    my ($a, $p) = @_;
+    if (not is_prime($p)) {
+        print "ERROR: $p is not prime\n  You dummy.\n";
+        return undef;
+    }
+    my $r = pow_mod($a, rshift($p-1,1), $p);
+    return ($r == 1);
 }
 
 # -----------------------------------------------------------------
@@ -1350,11 +1443,9 @@ sub args(+@) {
 # -----------------------------------------------------------------
 sub msg_too_large($$) {
     my ($msg, $n) = @_;
-    if ($msg >= $n) {
-        print "ERROR: plaintext $msg must be less than $n\n";
-        return 1;
-    }
-    return 0;
+    return 0 if $msg < $n;
+    print "ERROR: plaintext $msg must be less than $n\n";
+    return 1;
 }
 
 # -----------------------------------------------------------------
@@ -1362,12 +1453,20 @@ sub int_from_bytes($$) {
     my ($data, $bits) = @_;
     die if not $bits;
     my $hash = Digest::SHA::sha256($data);
+    my $hashx = 0;
+    my $bitx = 0;
     my $num = 0;
     for (my $i = 0; $i < $bits; ++$i) {
-        my $bit = (ord(substr($hash, int($i/8) % length($hash), 1)) >> ($i%8)) & 1;
-        $num |= lshift($bit, $i);
+        my $bit = (ord(substr($hash, $hashx, 1)) >> $bitx) & 1;
+        $num |= lshift(1,$i) if $bit;
+        if (++$bitx >= 8) {
+            $bitx = 0;
+            if (++$hashx >= length($hash)) {
+                $hashx = 0;
+                $hash = Digest::SHA::sha256($hash);
+            }
+        }
     }
-    ## $num = -$num if $num < 0;
     return $num;
 }
 
@@ -1400,8 +1499,7 @@ sub print_map(+@) {
 sub print_bin($) {
     my ($data) = @_;
     for (my $i = 0; $i < length $data; ++$i) {
-        my $ch = substr($data, $i, 1);
-        printf " %02x", ord $ch;
+        printf "%02x", ord substr($data,$i,1);
     }
 }
 
@@ -1421,19 +1519,15 @@ sub read_file($$) {
     my $fd;
     if (not open $fd, $file) {
         print "ERROR: cannot open $file: $!\n";
-        return '';
+        return undef;
     }
     my $data;
     my $nread = read($fd, $data, $size);
     close $fd;
     if ($nread != $size) {
         print "ERROR: read $nread / $size from $file\n";
-        return '';
+        return undef;
     }
-    my $hexdata;
-    for (my $i = 0; $i < length $data; ++$i) {
-        $hexdata .= sprintf '%02x', ord substr($data,$i,1);
-    }
-    return $hexdata;
+    return $data;
 }
 
