@@ -223,12 +223,12 @@ sub command(@) {
         for ($end = 1; $end < @_; ++$end) {
             last if ($_[$end] eq ';' or $_[$end] eq '&');
         }
-        my $endc = ($end < @_) ? $_[$end] : '';
+        my $termchar = ($end < @_) ? $_[$end] : '';
         my @args = splice @_, 0, $end;
         my $quit_on_error = 0;
-        if ($endc) {
-            die if $endc ne shift(@_); # discard termchar
-            $quit_on_error = 1 if $endc eq '&';
+        if ($termchar) {
+            die if $termchar ne shift(@_); # discard termchar
+            $quit_on_error = 1 if $termchar eq '&';
         }
         my ($handler) = @$command;
         my $start_time = time();
@@ -1046,9 +1046,7 @@ sub quick_sort(@) {
 sub quick_sort_range($$$) {
     my ($lo, $hi, $arr) = @_;
     return if $lo >= $hi;
-    #my $pivot = $$arr[int(($hi+$lo)/2)];
-    #my $pivot = int(($$arr[$lo] + $$arr[$hi] + $$arr[int(($hi+$lo)/2)]) / 3);
-    my $pivot = int(($$arr[$lo] + $$arr[$hi]) / 2);
+    my $pivot = $$arr[int(($hi+$lo)/2)];
     my $plo = $lo-1;
     my $phi = $hi+1;
     for (;;) {
@@ -1397,13 +1395,17 @@ sub is_even($) {
 # -----------------------------------------------------------------
 sub lshift($$) {
     my ($n, $shift) = @_;
-    return int($n << $shift);
+    $n = $n+0;
+    $n->blsft($shift);
+    return $n;
 }
 
 # -----------------------------------------------------------------
 sub rshift($$) {
     my ($n, $shift) = @_;
-    return int($n >> $shift);
+    $n = $n+0;
+    $n->brsft($shift);
+    return $n;
 }
 
 # -----------------------------------------------------------------
