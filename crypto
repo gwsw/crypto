@@ -34,7 +34,7 @@ my %all_options = (
     'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
     'rng'         => [ 's', "Random number generator (".join(',',sort keys %all_rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
     'rsa-orig'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
-    'rsa-rek'     => [ 'b', "Use random encrytion key rather than 65537." ],
+    'rsa-randkey' => [ 'b', "Use random encrytion key rather than 65537." ],
     'seed'        => [ 's', "Seed string for RNG. \"NUM\@FILE\" to read NUM bytes from FILE.", \&opt_seed ],
 );
 
@@ -57,7 +57,7 @@ my %all_commands = (
     'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
     'mul'             => [ \&cmd_mul,             "N1 N2 MOD" ],
     'msort'           => [ \&cmd_sort,            "NUM..." ],
-    'option'          => [ \&cmd_option,          "[+!]OPTION[=VALUE]..." ],
+    'option'          => [ \&cmd_option,          "[+!_]OPTION[=VALUE]..." ],
     'pow'             => [ \&cmd_pow,             "BASE EXP MOD" ],
     'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
     'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG" ],
@@ -87,20 +87,12 @@ sub usage(;$) {
     my ($cmd) = @_;
     my $opts_prt = 0;
     if ($cmd eq 'shell') {
-        print "usage: crypto [options] [command args... [';' command args...]...]\n";
+        print "usage: crypto [options] [command args... [{';'|'&'} command args...]...]\n";
         usage_options(1);
         $opts_prt = 1;
         $cmd = '';
     }
-    if (not $cmd) {
-        print "commands: (values in {} may be '-' if preceded by *-gen)\n";
-        foreach my $wcmd (sort keys %all_commands) {
-            my $command = $all_commands{$wcmd};
-            my ($handler, $args) = @$command;
-            print "  $wcmd $args\n";
-            usage_options(0) if $wcmd eq 'option' and not $opts_prt;
-        }
-    } else {
+    if ($cmd) {
         my $command = $all_commands{$cmd};
         if (not $command) {
             print "invalid command \"$cmd\"\n";
@@ -108,6 +100,14 @@ sub usage(;$) {
             my ($handler, $args) = @$command;
             print "  $cmd $args\n";
             usage_options(0) if $cmd eq 'option';
+        }
+    } else { # all commands
+        print "commands: (values in {} may be '-' if preceded by *-gen)\n";
+        foreach my $wcmd (sort keys %all_commands) {
+            my $command = $all_commands{$wcmd};
+            my ($handler, $args) = @$command;
+            print "  $wcmd $args\n";
+            usage_options(0) if $wcmd eq 'option' and not $opts_prt;
         }
     }
     return 0;
@@ -127,7 +127,7 @@ sub usage_options {
 # -----------------------------------------------------------------
 exit (main() ? 0 : 1);
 sub main {
-    my @alist;
+    my @alist; # list of all option names for GetOptions
     while (my ($var,$option) = each %all_options) {
         my ($type) = @$option;
         $var .= "=$type" unless $type eq 'b';
@@ -211,27 +211,30 @@ sub set_rng($$) {
 # -----------------------------------------------------------------
 sub command(@) {
     my $ret = 1;
-    while (@_ and $ret) {
+    while (@_) {
         my $cmd = $_[0];
         my $command = $all_commands{$cmd};
         if (not $command) {
             print "invalid command \"$cmd\"; use \"help\" for help\n";
             last;
         }
-        # See if there is a semicolon arg.
+        # See if there is a termchar (';' or '&').
         my $end;
         for ($end = 1; $end < @_; ++$end) {
-            if ($_[$end] eq ';') {
-                last;
-            }
+            last if ($_[$end] eq ';' or $_[$end] eq '&');
         }
+        my $endc = ($end < @_) ? $_[$end] : '';
         my @args = splice @_, 0, $end;
-        while (@_ > 0 and $_[0] eq ';') { shift @_; } # discard semicolon(s)
-
+        my $quit_on_error = 0;
+        if ($endc) {
+            die if $endc ne shift(@_); # discard termchar
+            $quit_on_error = 1 if $endc eq '&';
+        }
         my ($handler) = @$command;
         my $start_time = time();
         $ret = &$handler(@args); # run the cmd
         printf "=%.6f sec\n", time()-$start_time if $opt{perf};
+        last if not $ret and $quit_on_error;
     }
     return $ret;
 }
@@ -379,10 +382,9 @@ sub cmd_rsa_gen {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits or $bits < 3;
     my $rsa = rsa_gen($bits);
-    if ($rsa) {
-        save_obj($rsa);
-        print_map($rsa, 'e','d','n');
-    }
+    return 0 if not $rsa;
+    save_obj($rsa);
+    print_map($rsa, 'e','d','n');
     return 1;
 }
 
@@ -409,10 +411,9 @@ sub cmd_eg_gen {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits or $bits < 3;
     my $eg = eg_gen($bits);
-    if ($eg) {
-        save_obj($eg);
-        print_map($eg, 'p','g','y','x');
-    }
+    return 0 if not $eg;
+    save_obj($eg);
+    print_map($eg, 'p','g','y','x');
     return 1;
 }
 
@@ -461,10 +462,9 @@ sub cmd_rabin_gen {
     return usage($cmd) if not $bits;
     $bits += $opt{'rabin-shift'} if not $opt{'rabin-raw'};
     my $rabin = rabin_gen($bits, $sign_nonce_bits);
-    if ($rabin) {
-        save_obj($rabin);
-        print_map($rabin, 'p','q','n');
-    }
+    return 0 if not $rabin;
+    save_obj($rabin);
+    print_map($rabin, 'p','q','n');
     return 1;
 }
 
@@ -526,10 +526,9 @@ sub cmd_schnorr_gen {
     my ($cmd, $bits, $qbits) = args(\@_);
     return usage($cmd) if not $qbits or $qbits >= $bits;
     my $sch = schnorr_gen($bits, $qbits);
-    if ($sch) {
-        save_obj($sch);
-        print_map($sch, 'p','q','a','qbits','s','v');
-    }
+    return 0 if not $sch;
+    save_obj($sch);
+    print_map($sch, 'p','q','a','qbits','s','v');
     return 1;
 }
 
@@ -595,9 +594,13 @@ sub cmd_option {
         # var may be 'name', '!name', '+name', 'name=value'.
         my $set = undef;
         if (substr($var,0,1) eq '-') { $var = substr($var,1); } # ignore leading dash
-        if ($var =~ /^ ([!+]) (.*) \s*$/x) { # !name or +name
+        if ($var =~ /^ ([_!+]) (.*) \s*$/x) { # _name or !name or +name
             $var = $2;
             $set = ($1 eq '+') ? 1 : 0;
+            if ($1 eq '_') {
+                print_option($var);
+                return 1;
+            }
         } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
             $var = $1;
             $set = $2;
@@ -756,18 +759,21 @@ sub rsa_gen($) {
     my $n1 = $opt{'rsa-orig'} ? ($p-1) * ($q-1) : lcm($p-1, $q-1);
     my $e = rsa_exponent($bits, $n1); # public
     my $d = inv($e, $n1); # private
-    die "keys don't fit in $bits bits; try -e?\n" if $e >= $n or $d >= $n;
+    if ($e >= $n or $d >= $n) {
+        print "keys don't fit in $bits bits; try --rsa-randkey?\n";
+        return undef;
+    }
     return { 'e' => $e, 'd' => $d, 'n' => $n };
 }
 
 # -----------------------------------------------------------------
 sub rsa_exponent($$) {
     my ($bits, $n1) = @_;
-    my $e = $opt{'rsa-rand'} ? 0 : 65537;
+    my $e = $opt{'rsa-randkey'} ? 0 : 65537;
     for (;;) {
         $e = random(2, $n1-1) | 1 if not $e;
         return $e if gcd($e,$n1) == 1;
-        $e = 0;
+        $e = 0; # try again
     } 
 }
 
@@ -1365,7 +1371,9 @@ sub lcm($$) {
     my ($u, $v) = @_;
     my $gcd = gcd($u, $v);
     return undef if not $gcd;
-    return ($u * $v)->bdiv($gcd);
+    my $r = $u * $v;
+    $r->bdiv($gcd);
+    return $r;
 }
 
 # -----------------------------------------------------------------
