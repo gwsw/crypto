@@ -46,6 +46,7 @@ my %all_commands = (
     'eg-verify'       => [ \&cmd_eg_verify,       "{P G Y} R S MSG" ],
     'euclid'          => [ \&cmd_euclid,          "NUM1 NUM2" ],
     'find-prime'      => [ \&cmd_find_prime,      "BITS" ],
+    'find-pq-prime'   => [ \&cmd_find_pq_prime,   "BITS QBITS" ],
     'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2" ],
     'help'            => [ \&cmd_help,            "[command]" ],
     'inv'             => [ \&cmd_inv,             "NUM MOD" ],
@@ -97,20 +98,23 @@ sub usage(;$) {
         if (not $command) {
             print "invalid command \"$cmd\"\n";
         } else {
-            my ($handler, $args) = @$command;
-            print "  $cmd $args\n";
-            usage_options(0) if $cmd eq 'option';
+            usage_cmd($cmd, $command, 0);
         }
     } else { # all commands
         print "commands: (values in {} may be '-' if preceded by *-gen)\n";
         foreach my $wcmd (sort keys %all_commands) {
-            my $command = $all_commands{$wcmd};
-            my ($handler, $args) = @$command;
-            print "  $wcmd $args\n";
-            usage_options(0) if $wcmd eq 'option' and not $opts_prt;
+            usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt);
         }
     }
     return 0;
+}
+
+# -----------------------------------------------------------------
+sub usage_cmd($$$) {
+    my ($cmd, $command, $opts_prt) = @_;
+    my ($handler, $args) = @$command;
+    print "  $cmd $args\n";
+    usage_options(0) if $cmd eq 'option' and not $opts_prt;
 }
 
 # -----------------------------------------------------------------
@@ -203,6 +207,7 @@ sub set_rng($$) {
     }
     my $new_rng = &$rng_init($bits, $seed);
     return 0 if not $new_rng;
+    $new_rng->{name} = $rname;
     $rng = $new_rng;
     ##print "RNG: $rname:$bits\n";
     return 1;
@@ -299,6 +304,15 @@ sub cmd_find_prime {
 }
 
 # -----------------------------------------------------------------
+sub cmd_find_pq_prime {
+    my ($cmd, $bits, $qbits) = args(\@_);
+    return usage($cmd) if not $qbits;
+    my ($p,$q,$r) = find_pq_prime($bits, $qbits);
+    print number($p), ' = ', number($q), ' * ', number($r), " +1\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
 sub cmd_is_prime {
     my ($cmd, $num) = args(\@_);
     return usage($cmd) if not $num;
@@ -338,6 +352,7 @@ sub cmd_random {
     my ($cmd, $min, $max) = args(\@_);
     return usage($cmd) if not $max;
     my $n = random($min, $max);
+    return cmd_fail("RNG($rng->{name})") if not defined $n;
     print number($n), "\n";
     return 1;
 }
@@ -347,7 +362,7 @@ sub cmd_random_bytes {
     my ($cmd, $bytes) = args(\@_);
     return usage($cmd) if not $bytes;
     my $data = $rng->{get}($rng, $bytes);
-    return cmd_fail('RNG') if not $data;
+    return cmd_fail("RNG($rng->{name})") if not $data;
     print_bin($data);
     print "\n";
     return 1;
@@ -422,7 +437,7 @@ sub cmd_eg_sign {
     my ($cmd, $p,$g,$x,$msg) = args(\@_, 'p','g','x');
     return usage($cmd) if not $msg;
     my $sig = eg_sign($p,$g,$x,$msg);
-    return cmd_fail('sign') if not defined $sig;
+    return cmd_fail('sign') if not $sig;
     print number($$sig{r}), ' ', number($$sig{s}), "\n";
     return 1;
 }
@@ -441,7 +456,7 @@ sub cmd_eg_encrypt {
     my ($cmd, $p,$g,$y,$msg) = args(\@_, 'p','g','y');
     return usage($cmd) if not $msg;
     my $enc = eg_encrypt($p,$g,$y,$msg);
-    return cmd_fail('encrypt') if not defined $enc;
+    return cmd_fail('encrypt') if not $enc;
     print number($$enc{r}), ' ', number($$enc{s}), "\n";
     return 1;
 }
@@ -460,7 +475,7 @@ sub cmd_eg_decrypt {
 sub cmd_rabin_gen {
     my ($cmd, $bits, $sign_nonce_bits) = args(\@_);
     return usage($cmd) if not $bits;
-    $bits += $opt{'rabin-shift'} if not $opt{'rabin-raw'};
+    $bits += $opt{'rabin-shift'} unless $opt{'rabin-raw'};
     my $rabin = rabin_gen($bits, $sign_nonce_bits);
     return 0 if not $rabin;
     save_obj($rabin);
@@ -473,11 +488,10 @@ sub cmd_rabin_encrypt {
     my ($cmd, $n,$msg) = args(\@_, 'n');
     return usage($cmd) if not $n or not defined $msg;
     # Use N low order zero bits to distinguish between 4 posssible decryptions.
-    $msg = lshift($msg, $opt{'rabin-shift'}) if not $opt{'rabin-raw'};
+    $msg = lshift($msg, $opt{'rabin-shift'}) unless $opt{'rabin-raw'};
     my $enc = rabin_encrypt($n, $msg);
-    if ($enc) {
-        print number($enc), "\n";
-    }
+    return cmd_fail('encrypt') if not defined $enc;
+    print number($enc), "\n";
     return 1;
 }
 
@@ -524,7 +538,7 @@ sub cmd_rabin_verify {
 # -----------------------------------------------------------------
 sub cmd_schnorr_gen {
     my ($cmd, $bits, $qbits) = args(\@_);
-    return usage($cmd) if not $qbits or $qbits >= $bits;
+    return usage($cmd) if not $bits or not $qbits or $qbits >= $bits;
     my $sch = schnorr_gen($bits, $qbits);
     return 0 if not $sch;
     save_obj($sch);
@@ -537,9 +551,8 @@ sub cmd_schnorr_sign {
     my ($cmd, $p,$q,$a,$qbits,$s,$msg) = args(\@_, 'p','q','a','qbits','s');
     return usage($cmd) if not $msg;
     my $sig = schnorr_sign($p,$q,$a,$qbits,$s,$msg);
-    if ($sig) {
-        print number($$sig{e}), ' ', number($$sig{y}), "\n";
-    }
+    return cmd_fail('sign') if not $sig;
+    print number($$sig{e}), ' ', number($$sig{y}), "\n";
     return 1;
 }
 
@@ -725,12 +738,9 @@ sub eg_encrypt($$$$) {
 sub eg_decrypt($$$$$) {
     my ($p,$g,$x,$r,$s) = @_;
     return undef if msg_too_large($r, $p) or msg_too_large($s, $p);
-    my $h;
-    if ($opt{'eg-slow'}) {
-        $h = inv(pow_mod($r, $x, $p), $p);
-    } else { # shortcut by Lagrange's Theorem
-        $h = pow_mod($r, $p-1-$x, $p);
-    }
+    my $h = $opt{'eg-slow'} ?
+        inv(pow_mod($r, $x, $p), $p) :
+        pow_mod($r, $p-1-$x, $p); # shortcut by Lagrange's Theorem
     return undef if not defined $h;
     return mul_mod($s, $h, $p);
 }
@@ -791,7 +801,10 @@ sub rsa_crypt($$$) {
 # -----------------------------------------------------------------
 sub rabin_gen($) {
     my ($bits, $sign_nonce_bits) = @_;
-    return undef if not $bits;
+    if (not $bits) {
+        print "invalid bit length \"$bits\"\n";
+        return undef;
+    }
     $sign_nonce_bits = 0 if not $sign_nonce_bits;
     my $bits2 = rshift($bits, 1);
     my $p = find_blum_prime($bits-$bits2);
@@ -836,7 +849,14 @@ sub rabin_decrypt($$$$) {
 # -----------------------------------------------------------------
 sub rabin_sign($$$) {
     my ($p, $q, $n, $bits, $sign_nonce_bits, $msg) = @_;
-    return undef if $bits < 3 or not $sign_nonce_bits;
+    if ($bits < 3) {
+        print "bits ($bits) must be >= 3\n";
+        return undef;
+    }
+    if (not $sign_nonce_bits) {
+        print "must invoke rabin-gen with sign_nonce_bits>0 before invoking rabin-sign\n";
+        return undef;
+    }
     for (my $tries = 0;; ++$tries) { # expected number of tries is 4
         my $umax = lshift(1, $sign_nonce_bits);
         my $u = random(rshift($umax,1), $umax-1);
@@ -1039,12 +1059,12 @@ sub merge_sort(@) {
 
 # -----------------------------------------------------------------
 sub quick_sort(@) {
-    quick_sort_range(0, @_-1, \@_);
+    quick_sort_range(\@_, 0, @_-1);
     return @_;
 }
 
 sub quick_sort_range($$$) {
-    my ($lo, $hi, $arr) = @_;
+    my ($arr, $lo, $hi) = @_;
     return if $lo >= $hi;
     my $pivot = $$arr[int(($hi+$lo)/2)];
     my $plo = $lo-1;
@@ -1055,8 +1075,8 @@ sub quick_sort_range($$$) {
         last if $plo >= $phi;
         ($$arr[$plo], $$arr[$phi]) = ($$arr[$phi], $$arr[$plo]);
     }
-    quick_sort_range($lo, $phi, $arr);
-    quick_sort_range($phi+1, $hi, $arr);
+    quick_sort_range($arr, $lo, $phi);
+    quick_sort_range($arr, $phi+1, $hi);
 }
 
 # -----------------------------------------------------------------
@@ -1117,6 +1137,7 @@ sub random($$) {
     my $m = $max - $min + 1;
     my $bytes = 1 + int(log($m) / log(256));
     my $rand = $rng->{get}($rng, $bytes);
+    return undef if not defined $rand;
     my $n = 0;
     for (my $i = 0; $i < $bytes; ++$i) {
         $n = lshift($n,8) + ord(substr($rand,$i,1));
@@ -1131,7 +1152,9 @@ sub get_bytes {
     my ($obj, $bytes) = @_;
     my $data = '';
     while (length($data) < $bytes) {
-        $data .= chr($obj->{get_byte}($obj));
+        my $byte = $obj->{get_byte}($obj);
+        return undef if not defined $byte;
+        $data .= chr($byte);
     }
     return $data;
 }
