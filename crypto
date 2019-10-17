@@ -22,6 +22,7 @@ my %all_rngs = (
     'sec' => \&sec_rng_init, 
     'bbs' => \&bbs_rng_init, 
     'sim' => \&sim_rng_init, 
+    'twi' => \&twi_rng_init, 
 );
 
 my %all_options = (
@@ -157,7 +158,7 @@ sub main {
         my $line = <>;
         last if not defined $line;
         $line =~ s/^\s+//; # rm leading space
-        $line =~ s/\s+$//; # rm trailing space
+        $line =~ s/\s+$//; # rm trailing space, \r, \n
         next if $line eq ''; # ignore empty line
         next if $line =~ /^#/; # ignore comment
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
@@ -503,13 +504,14 @@ sub cmd_rabin_decrypt {
     my @decs = rabin_decrypt($p, $q, $n, $enc);
     return cmd_fail('decrypt') if not @decs;
 
+    my $rabin_shift = $opt{'rabin-shift'};
     foreach my $m (@decs) {
         if ($opt{'rabin-raw'}) { # just print them all.
             print number($m), "\n";
-        } elsif (($m & rmask($opt{'rabin-shift'})) == 0) {
+        } elsif (($m & rmask($rabin_shift)) == 0) {
             # Found one with N low order zero bits.
             # It might be the right decryption (or we might be very unlucky).
-            print number(rshift($m, $opt{'rabin-shift'})), "\n";
+            print number(rshift($m, $rabin_shift)), "\n";
         }
     }
     return 1;
@@ -1161,7 +1163,7 @@ sub get_bytes {
 
 # -----------------------------------------------------------------
 # Standard RNG. Uses rand().
-sub std_rng_init($;$) {
+sub std_rng_init($$) {
     my ($bits, $seed) = @_;
     if ($seed and length($seed) > 0) {
         srand(int_from_bytes($seed, $bits));
@@ -1176,7 +1178,7 @@ sub std_rng_get_byte($) {
 
 # -----------------------------------------------------------------
 # Simple RNG.
-sub sim_rng_init($;$) {
+sub sim_rng_init($$) {
     my ($bits, $seed) = @_;
     my $iseed = ($seed and length($seed) > 0) ? int_from_bytes($seed, 32) : 0;
     return { 'get' => \&get_bytes, 'get_byte' => \&sim_rng_get_byte, 'seed' => $iseed };
@@ -1190,7 +1192,7 @@ sub sim_rng_get_byte($) {
 
 # -----------------------------------------------------------------
 # Secure RNG. Uses Math::Random::Secure.
-sub sec_rng_init($;$) {
+sub sec_rng_init($$) {
     my ($bits, $seed) = @_;
     if (not eval "require Math::Random::Secure") {
         print "Math::Random::Secure module not found\n";
@@ -1209,7 +1211,7 @@ sub sec_rng_get_byte($) {
 
 # -----------------------------------------------------------------
 # Blum-Blum-Shub RNG.
-sub bbs_rng_init($;$) {
+sub bbs_rng_init($$) {
     my ($bits, $seed) = @_;
     $seed = 1 if not $seed;
     # BBS needs another RNG for find_prime ???
@@ -1237,6 +1239,73 @@ sub bbs_rng_get_byte($) {
     $bbs->{x} = $x;
     return $byte;
 }
+
+# -----------------------------------------------------------------
+# Mersenne twister.
+sub twi_rng_init($$) {
+    my ($bits, $seed) = @_;
+    my $bmask = rmask($bits);
+    my $n = 312;
+    my $f = 6364136223846793005;
+    my @mt;
+    push @mt, int_from_bytes($seed, $bits);
+    for (my $i = 1; $i < $n; ++$i) {
+        push @mt, ($f * ($mt[$i-1] ^ ($mt[$i-1] >> ($bits-2))) + $i) & $bmask;
+    }
+    return { 'get' => \&twi_rng_get_bytes,
+        'bits' => $bits,
+        'mt' => \@mt,
+        'index' => $n, 
+        'a' => 0xB5026F5AA96619E9,
+        'b' => 0x71D67FFFEDA60000,
+        'c' => 0xFFF7EEE000000000,
+        'd' => 0x5555555555555555,
+        'l' => 43,
+        'm' => 156,
+        'n' => $n,
+        'r' => 31,
+        's' => 17,
+        't' => 37,
+        'u' => 29,
+    };
+}
+
+sub twi_rng_get_bytes($$) {
+    my ($twi, $bytes) = @_;
+    my $n = $twi->{n};
+    my $mt = $twi->{mt};
+    my $bits = $twi->{bits};
+    my $ibytes = int($bits / 8);
+    my $data = '';
+    while (length($data) < $bytes) {
+        if ($twi->{index} >= $n) {
+            my $lower_mask = rmask($twi->{r});
+            my $upper_mask = lshift(rmask($bits - $twi->{r}), $twi->{r});
+            for (my $i = 0; $i < $n; ++$i) {
+                my $j = $i+1;
+                $j = 0 if $j == $n;
+                die if $j >= $n;
+                my $x = ($$mt[$i] & $upper_mask) + ($$mt[$j] & $lower_mask);
+                my $xa = rshift($x,1);
+                $xa ^= $twi->{a} if $x & 1;
+                $$mt[$i] = $$mt[($i + $twi->{m}) % $n] ^ $xa;
+            }
+            $twi->{index} = 0;
+        }
+        my $y = $$mt[$twi->{index}++];
+        $y ^= rshift($y, $twi->{u}) & $twi->{d};
+        $y ^= lshift($y, $twi->{s}) & $twi->{b};
+        $y ^= lshift($y, $twi->{t}) & $twi->{c};
+        $y ^= rshift($y, $twi->{l});
+        for (my $i = 0; $i < $ibytes; ++$i) {
+            last if length($data) >= $bytes;
+            $data .= chr($y & 0xFF);
+            $y = rshift($y, 8);
+        }
+    }
+    return $data;
+}
+
 
 # -----------------------------------------------------------------
 # ---- Math
@@ -1322,7 +1391,7 @@ sub find_blum_prime($) {
 # Return (p,q,r) such that p is prime, q is prime and p = qr+1.
 sub find_pq_prime($$) {
     my ($bits, $qbits) = @_;
-    my $rmax = lshift(1,$bits-$qbits-1)-1;
+    my $rmax = rmask($bits-$qbits-1);
     my $rmin = rshift($rmax,1);
     for (;;) {
         my $q = find_prime($qbits); # pick the large factor first
@@ -1486,8 +1555,8 @@ sub int_from_bytes($$) {
     my ($data, $bits) = @_;
     die if not $bits;
     my $hash = Digest::SHA::sha256($data);
-    my $hashx = 0;
-    my $bitx = 0;
+    my $hashx = 0; # Byte index in $hash
+    my $bitx = 0; # Bit index (0-7) in $hashx byte
     my $num = 0;
     for (my $i = 0; $i < $bits; ++$i) {
         my $bit = (ord(substr($hash, $hashx, 1)) >> $bitx) & 1;
