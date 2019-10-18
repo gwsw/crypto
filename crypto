@@ -35,7 +35,7 @@ my %all_options = (
     'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
     'rng'         => [ 's', "Random number generator (".join(',',sort keys %all_rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
     'rsa-orig'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
-    'rsa-randkey' => [ 'b', "Use random encrytion key rather than 65537." ],
+    'rsa-randexp' => [ 'b', "Use random encrytion exponent rather than 65537." ],
     'seed'        => [ 's', "Seed string for RNG. \"NUM\@FILE\" to read NUM bytes from FILE.", \&opt_seed ],
 );
 
@@ -766,13 +766,13 @@ sub rsa_gen($) {
     my ($bits) = @_;
     my $bits2 = rshift($bits, 1); # bits/2 for p, and bits/2 for q
     my $p = find_prime($bits2);
-    my $q = find_prime($bits2);
+    my $q = find_prime($bits - $bits2);
     my $n = $p * $q; # public
     my $n1 = $opt{'rsa-orig'} ? ($p-1) * ($q-1) : lcm($p-1, $q-1);
     my $e = rsa_exponent($bits, $n1); # public
     my $d = inv($e, $n1); # private
     if ($e >= $n or $d >= $n) {
-        print "keys don't fit in $bits bits; try --rsa-randkey?\n";
+        print "keys don't fit in $bits bits; try --rsa-randexp?\n";
         return undef;
     }
     return { 'e' => $e, 'd' => $d, 'n' => $n };
@@ -781,7 +781,7 @@ sub rsa_gen($) {
 # -----------------------------------------------------------------
 sub rsa_exponent($$) {
     my ($bits, $n1) = @_;
-    my $e = $opt{'rsa-randkey'} ? 0 : 65537;
+    my $e = $opt{'rsa-randexp'} ? 0 : 65537;
     for (;;) {
         $e = random(2, $n1-1) | 1 if not $e;
         return $e if gcd($e,$n1) == 1;
@@ -828,7 +828,7 @@ sub rabin_encrypt($$) {
 sub rabin_decrypt($$$$) {
     my ($p, $q, $n, $enc) = @_;
     return () if msg_too_large($enc, $n);
-    # Find modular square root of enc, mod p and q.
+    # Find modular square root of enc, mod p and mod q.
     # That is, (mp*mp % p) = enc, and (mq*mq % q) = enc.
     my $mp = pow_mod($enc, rshift($p+1,2), $p);
     my $mq = pow_mod($enc, rshift($q+1,2), $q);
@@ -840,6 +840,7 @@ sub rabin_decrypt($$$$) {
     # Use Chinese remainder theorem to find 4 candidates r1..r4.
     my $t1 = xmod($yp * $p * $mq, $n);
     my $t2 = xmod($yq * $q * $mp, $n);
+
     my $r1 = xmod($t1 + $t2, $n);
     my $r2 = xmod($t1 - $t2, $n);
     my $r3 = $n - $r1;
@@ -851,10 +852,6 @@ sub rabin_decrypt($$$$) {
 # -----------------------------------------------------------------
 sub rabin_sign($$$) {
     my ($p, $q, $n, $bits, $sign_nonce_bits, $msg) = @_;
-    if ($bits < 3) {
-        print "bits ($bits) must be >= 3\n";
-        return undef;
-    }
     if (not $sign_nonce_bits) {
         print "must invoke rabin-gen with sign_nonce_bits>0 before invoking rabin-sign\n";
         return undef;
@@ -863,6 +860,7 @@ sub rabin_sign($$$) {
         my $umax = lshift(1, $sign_nonce_bits);
         my $u = random(rshift($umax,1), $umax-1);
         my $c = rabin_msg($msg, $u, $bits);
+        return undef if not defined $c;
         my @xs = rabin_decrypt($p, $q, $n, $c);
         next if not @xs;
         my $x = shift @xs;
@@ -874,12 +872,17 @@ sub rabin_sign($$$) {
 sub rabin_verify($$$$$) {
     my ($n, $bits, $u, $x, $msg) = @_;
     my $c = rabin_msg($msg, $u, $bits);
+    return undef if not defined $c;
     return rabin_encrypt($n, $x) == $c;
 }
 
 # -----------------------------------------------------------------
 sub rabin_msg($$$) {
     my ($msg, $u, $bits) = @_;
+    if ($bits < 4) {
+        print "bits ($bits) must be >= 4\n";
+        return undef;
+    }
     # Must be less than n, which may be bits-1, so make this bits-2.
     return int_from_bytes($msg.'+'.$u, $bits-2);
 }
@@ -1283,7 +1286,7 @@ sub twi_rng_get_bytes($$) {
             my $upper_mask = lshift(rmask($bits - $twi->{r}), $twi->{r});
             for (my $i = 0; $i < $n; ++$i) {
                 my $j = $i+1;
-                $j = 0 if $j == $n;
+                $j = 0 if $j == $n; # wrap
                 die if $j >= $n;
                 my $x = ($$mt[$i] & $upper_mask) + ($$mt[$j] & $lower_mask);
                 my $xa = rshift($x,1);
@@ -1297,6 +1300,7 @@ sub twi_rng_get_bytes($$) {
         $y ^= lshift($y, $twi->{s}) & $twi->{b};
         $y ^= lshift($y, $twi->{t}) & $twi->{c};
         $y ^= rshift($y, $twi->{l});
+        # y is the RNG result. Extract ibytes bytes from it.
         for (my $i = 0; $i < $ibytes; ++$i) {
             last if length($data) >= $bytes;
             $data .= chr($y & 0xFF);
@@ -1333,7 +1337,6 @@ sub mul_mod($$$) {
 # Miller-Rabin primality test.
 sub is_prime($) {
     my ($num) = @_;
-    my $loops = $opt{loops};
 
     # For efficiency, try some small prime factors first.
     return 0 if $num <= 1;
@@ -1354,6 +1357,7 @@ sub is_prime($) {
     }
 
     # Repeat Miller-Rabin loops times, each with a random witness.
+    my $loops = $opt{loops};
     while ($loops-- > 0) {
         my $a = random(2, $num-2); # witness
         my $x = pow_mod($a, $t, $num);
@@ -1457,6 +1461,7 @@ sub gcd($$) {
 
 # -----------------------------------------------------------------
 # Return least common multiple of u and v.
+# lcm(u,v) = (u*v)/gcd(u,v)
 sub lcm($$) {
     my ($u, $v) = @_;
     my $gcd = gcd($u, $v);
@@ -1471,7 +1476,7 @@ sub lcm($$) {
 sub is_quad_residue($$) {
     my ($a, $p) = @_;
     if (not is_prime($p)) {
-        print "ERROR: $p is not prime\n  You dummy.\n";
+        print "ERROR: $p is not prime, you dummy.\n";
         return undef;
     }
     my $r = pow_mod($a, rshift($p-1,1), $p);
@@ -1583,6 +1588,7 @@ sub i($) {
 }
 
 # -----------------------------------------------------------------
+# Return printable representation.
 sub number($) {
     my ($n) = @_;
     return $n->as_hex() if $opt{hex};
