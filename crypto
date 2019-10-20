@@ -6,6 +6,8 @@ use strict;
 use bignum;
 use Getopt::Long;
 use Time::HiRes qw(time);
+use List::Util qw(min max);
+use List::MoreUtils qw(first_index);
 use Digest::SHA;
 
 my $rng_bits_default    = 32;
@@ -76,8 +78,16 @@ my %all_commands = (
     'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG" ],
     'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG" ],
     'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
+    'sol-decrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
+    'sol-encrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
 );
+
+# For Solitaire.
+my $suit_cards = 52;
+my $jokers = 2;
+my $jokerA = $suit_cards+1;
+my $jokerB = $jokerA+1;
 
 
 # -----------------------------------------------------------------
@@ -89,7 +99,8 @@ sub usage(;$) {
     my ($cmd) = @_;
     my $opts_prt = 0;
     if ($cmd eq 'shell') {
-        print "usage: crypto [options] [command args... [{';'|'&'} command args...]...]\n";
+        print "usage: crypto [options] [--] [command args... [{';'|'&'} command args...]...]\n";
+        print " options:\n";
         usage_options(1);
         $opts_prt = 1;
         $cmd = '';
@@ -102,7 +113,7 @@ sub usage(;$) {
             usage_cmd($cmd, $command, 0);
         }
     } else { # all commands
-        print "commands: (values in {} may be '-' if preceded by *-gen)\n";
+        print " commands: (values in {} may be '-' if preceded by *-gen)\n";
         foreach my $wcmd (sort keys %all_commands) {
             usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt);
         }
@@ -125,7 +136,7 @@ sub usage_options {
     foreach my $var (sort keys %all_options) {
         my $option = $all_options{$var};
         my ($type, $desc) = @$option;
-        printf "        $dash%-13s %s\n", $var . ($type eq 'b' ? ' ' : '='), $desc;
+        printf "    $dash%-13s %s\n", $var . ($type eq 'b' ? ' ' : '='), $desc;
     }
 }
 
@@ -171,7 +182,7 @@ sub main {
         foreach my $arg (split /(\s+|")/, $line.' ') {
             if ($arg eq '"') {
                 $quoting = not $quoting;
-                $word .= $arg; # add quote to word
+                ###$word .= $arg; # add quote to word
             } elsif ($quoting) { # add everything to arg while quoting
                 $word .= $arg;
             } elsif ($arg !~ /^\s*$/) { # add nonspace string to word
@@ -568,6 +579,25 @@ sub cmd_schnorr_verify {
 }
 
 # -----------------------------------------------------------------
+sub cmd_sol_crypt {
+    my ($cmd, $deck, $msg, $msg2) = @_;
+    if ($deck eq '-k') {
+        $deck = sol_deck_from_key($msg);
+        $msg = $msg2;
+    } else {
+        my @deck = split /[\s,]/, $deck;
+        $deck = \@deck;
+    }
+    return usage($cmd) if not defined $msg;
+    return usage($cmd) if scalar(@$deck) != 54;
+    # Should check that deck is a permutation of 1..54
+    my $crypt = sol_crypt(($cmd eq 'sol-encrypt'), $deck, $msg);
+    return cmd_fail($cmd) if not defined $crypt;
+    print "$crypt\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
 sub cmd_kx {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits;
@@ -918,6 +948,103 @@ sub schnorr_verify($$$$$$$$) {
     my $x = mul_mod(pow_mod($a, $y, $p), pow_mod($v, $e, $p), $p);
     my $e2 = int_from_bytes($msg.'+'.$x, $qbits) % $q;
     return $e2 == $e;
+}
+
+# -----------------------------------------------------------------
+# Solitaire encryption/decryption.
+sub sol_crypt($$$) {
+    my ($encrypt, $deck, $msg) = @_;
+    my $res = '';
+    for (my $i = 0; $i < length $msg; ++$i) {
+        my $cval = sol_char_value(substr($msg, $i, 1));
+        next if $cval < 1 or $cval > 26;
+        my $k = 0;
+        while (not $k) {
+            $k = sol_keystream($deck);
+        }
+        $k = -$k if not $encrypt;
+        $cval = xmod($cval-1 + $k, 26) + 1;
+        die if $cval < 1 or $cval > 26;
+        $res .= sol_value_char($cval);
+    }
+    return $res;
+}
+
+# -----------------------------------------------------------------
+# Schneier's "method 3" which derives a deck order from an alphabetic key.
+sub sol_deck_from_key($) {
+    my ($key) = @_;
+    my @deck = ( 1 .. $suit_cards+$jokers ); # start with deck in standard order
+    for (my $i = 0; $i < length $key; ++$i) {
+        sol_keystream(\@deck, sol_char_value(substr($key, $i, 1)));
+    }
+    return \@deck;
+}
+
+# -----------------------------------------------------------------
+sub sol_keystream($;$) {
+    my ($deck, $keygen) = @_;
+    sol_move($deck, $jokerA, +1);
+    sol_move($deck, $jokerB, +2);
+    sol_triple_cut($deck);
+    sol_count_cut($deck, $$deck[$#$deck]);
+    if ($keygen) {
+        sol_count_cut($deck, $keygen);
+        return 0;
+    }
+    my $index = min($$deck[0], sol_cards()-1);
+    my $value = $$deck[$index];
+    return 0 if $value > $suit_cards; # ignore joker
+    return $value;
+}
+
+# -----------------------------------------------------------------
+# Move a card a fixed number of positions forward in the deck.
+sub sol_move($$$) {
+    my ($deck, $card, $moves) = @_;
+    my $index = first_index { $_ == $card } @$deck;
+    die if $index < 0; # card not in deck?
+    if ($index + $moves >= sol_cards()) { # wrap to start of deck
+        my @card = splice $deck, $index, 1;
+        splice $deck, $index + $moves - sol_cards() + 1, 0, @card;
+    } else {
+        splice $deck, $index, $moves+1, @$deck[$index+1 .. $index+$moves], $$deck[$index];
+    }
+}
+
+# -----------------------------------------------------------------
+sub sol_triple_cut($) {
+    my ($deck) = @_;
+    my $j1 = first_index { $_ == $jokerA } @$deck;
+    my $j2 = first_index { $_ == $jokerB } @$deck;
+    ($j1,$j2) = ($j2,$j1) if $j1 > $j2;
+    my @tail = splice $deck, $j2+1; # remove tail
+    my @head = splice $deck, 0, $j1, @tail; # replace head with tail
+    push $deck, @head; # append head
+}
+
+# -----------------------------------------------------------------
+sub sol_count_cut($$) {
+    my ($deck, $count) = @_;
+    my @cards = splice $deck, 0, min($count, sol_cards()-1);
+    splice $deck, -1, 0, @cards;
+}
+
+# -----------------------------------------------------------------
+sub sol_char_value {
+    my ($ch) = @_;
+    return ord(uc($ch)) - ord('A') + 1;
+}
+
+# -----------------------------------------------------------------
+sub sol_value_char {
+    my ($val) = @_;
+    return chr($val-1 + ord('A'));
+}
+
+# -----------------------------------------------------------------
+sub sol_cards {
+    return $suit_cards + $jokers;
 }
 
 
