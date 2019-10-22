@@ -5,17 +5,16 @@
 use strict;
 use bignum;
 use Getopt::Long;
-use Time::HiRes qw(time);
-use List::Util qw(min max);
-use List::MoreUtils qw(first_index);
 use Digest::SHA;
+use Time::HiRes      qw( time );
+use List::Util       qw( min max );
+use List::MoreUtils  qw( first_index );
 
+# Constants
 my $rng_bits_default    = 32;
 my $mr_loops_default    = 8;
 my $rabin_shift_default = 8;
-my $rng; # the active RNG, returned from *_rng_init
-my %opt; # currently set options
-my $saved;
+my $simple_pivot = 1;
 
 my %set_alias = ( 'on' => 1, 'off' => 0 );
 
@@ -28,6 +27,7 @@ my %all_rngs = (
 );
 
 my %all_options = (
+    'cards'       => [ 'b', "Print playing cards in Solitaire." ],
     'eg-slow'     => [ 'b', "Don't use Lagrange Theorem shortcut to compute mult. inverse." ],
     'hex'         => [ 'b', "Print numbers in hex." ],
     'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
@@ -39,6 +39,7 @@ my %all_options = (
     'rsa-orig'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
     'rsa-randexp' => [ 'b', "Use random encrytion exponent rather than 65537." ],
     'seed'        => [ 's', "Seed string for RNG. \"NUM\@FILE\" to read NUM bytes from FILE.", \&opt_seed ],
+    'verbose'     => [ 'b', "Print debugging info." ],
 );
 
 my %all_commands = (
@@ -84,10 +85,15 @@ my %all_commands = (
 );
 
 # For Solitaire.
-my $suit_cards = 52;
-my $jokers = 2;
-my $jokerA = $suit_cards+1;
-my $jokerB = $jokerA+1;
+my $suit_cards   = 52;
+my $jokers       = 2;
+my $jokerA       = $suit_cards+1;
+my $jokerB       = $jokerA+1;
+
+# Global variables.
+my $rng; # the active RNG, returned from *_rng_init
+my %opt; # currently set options
+my $saved;
 
 
 # -----------------------------------------------------------------
@@ -182,18 +188,17 @@ sub main {
         foreach my $arg (split /(\s+|")/, $line.' ') {
             if ($arg eq '"') {
                 $quoting = not $quoting;
-                ###$word .= $arg; # add quote to word
-            } elsif ($quoting) { # add everything to arg while quoting
+            } elsif ($quoting) { # add everything to word while quoting
                 $word .= $arg;
             } elsif ($arg !~ /^\s*$/) { # add nonspace string to word
                 $word .= $arg; 
-            } elsif ($arg =~ /\s+/) { # space = end of word
+            } elsif ($arg =~ /\s+/) { # unquoted space = end of word
                 push @args, $word;
                 $word = '';
             }
         }
         if (not command(@args)) {
-            print "*** command failed\n";
+            print "*** command failed\n" unless $opt{'no-prompt'};
             $ok = 0;
         }
     }
@@ -236,10 +241,8 @@ sub command(@) {
             last;
         }
         # See if there is a termchar (';' or '&').
-        my $end;
-        for ($end = 1; $end < @_; ++$end) {
-            last if ($_[$end] eq ';' or $_[$end] eq '&');
-        }
+        my $end = first_index { $_ eq ';' or $_ eq '&' } @_;
+        $end = scalar(@_) if $end < 0;
         my $termchar = ($end < @_) ? $_[$end] : '';
         my @args = splice @_, 0, $end;
         my $quit_on_error = 0;
@@ -588,8 +591,7 @@ sub cmd_sol_crypt {
         my @deck = split /[\s,]/, $deck;
         $deck = \@deck;
     }
-    return usage($cmd) if not defined $msg;
-    return usage($cmd) if scalar(@$deck) != 54;
+    return usage($cmd) if not defined $msg or scalar(@$deck) != 54;
     # Should check that deck is a permutation of 1..54
     my $crypt = sol_crypt(($cmd eq 'sol-encrypt'), $deck, $msg);
     return cmd_fail($cmd) if not defined $crypt;
@@ -955,13 +957,16 @@ sub schnorr_verify($$$$$$$$) {
 sub sol_crypt($$$) {
     my ($encrypt, $deck, $msg) = @_;
     my $res = '';
+    sol_print_deck($deck) if $opt{verbose};
     for (my $i = 0; $i < length $msg; ++$i) {
         my $cval = sol_char_value(substr($msg, $i, 1));
         next if $cval < 1 or $cval > 26;
         my $k = 0;
         while (not $k) {
             $k = sol_keystream($deck);
+            sol_print_deck($deck) if $opt{verbose};
         }
+        print "keystream $k\n" if $opt{verbose};
         $k = -$k if not $encrypt;
         $cval = xmod($cval-1 + $k, 26) + 1;
         die if $cval < 1 or $cval > 26;
@@ -974,6 +979,7 @@ sub sol_crypt($$$) {
 # Schneier's "method 3" which derives a deck order from an alphabetic key.
 sub sol_deck_from_key($) {
     my ($key) = @_;
+    $key =~ s/[^a-z]//ig;
     my @deck = ( 1 .. $suit_cards+$jokers ); # start with deck in standard order
     for (my $i = 0; $i < length $key; ++$i) {
         sol_keystream(\@deck, sol_char_value(substr($key, $i, 1)));
@@ -984,6 +990,7 @@ sub sol_deck_from_key($) {
 # -----------------------------------------------------------------
 sub sol_keystream($;$) {
     my ($deck, $keygen) = @_;
+    return 0 if $keygen and ($keygen < 1 or $keygen > 26);
     sol_move($deck, $jokerA, +1);
     sol_move($deck, $jokerB, +2);
     sol_triple_cut($deck);
@@ -1031,22 +1038,48 @@ sub sol_count_cut($$) {
 }
 
 # -----------------------------------------------------------------
-sub sol_char_value {
+sub sol_char_value($) {
     my ($ch) = @_;
     return ord(uc($ch)) - ord('A') + 1;
 }
 
 # -----------------------------------------------------------------
-sub sol_value_char {
+sub sol_value_char($) {
     my ($val) = @_;
     return chr($val-1 + ord('A'));
 }
 
 # -----------------------------------------------------------------
-sub sol_cards {
+sub sol_cards() {
     return $suit_cards + $jokers;
 }
 
+# -----------------------------------------------------------------
+sub sol_print_deck($) {
+    my ($deck) = @_;
+    my $print_cards = $opt{cards};
+    for (my $i = 0; $i < @$deck; ++$i) {
+        my $card = $$deck[$i];
+        my $pr_card = $print_cards ? sol_playing_card($card) : $card;
+        print $pr_card, ' ';
+        print "\n" if $print_cards and $i == (sol_cards() / 2) - 1;
+    }
+    print "\n";
+}
+
+# -----------------------------------------------------------------
+sub sol_playing_card($) {
+    my ($n) = @_;
+    die if $n > sol_cards();
+    my @playing_card = qw( ZZ
+        Ac 2c 3c 4c 5c 6c 7c 8c 9c Tc Jc Qc Kc
+        Ad 2d 3d 4d 5d 6d 7d 8d 9d Td Jd Qd Kd
+        Ah 2h 3h 4h 5h 6h 7h 8h 9h Th Jh Qh Kh
+        As 2s 3s 4s 5s 6s 7s 8s 9s Ts Js Qs Ks
+        =A =B
+    );
+    return $playing_card[$n];
+}
 
 # -----------------------------------------------------------------
 # Diffie-Hellman key exchange
@@ -1212,6 +1245,20 @@ sub quick_sort_range($$$) {
 }
 
 # -----------------------------------------------------------------
+#sub sort3 {
+#    my ($a,$b,$c) = @_;
+#    if ($a < $b) {
+#        return ($a,$b,$c) if $b < $c;
+#        return ($a,$c,$b) if $a < $c;
+#        return ($c,$a,$b);
+#    } else {
+#        return ($b,$a,$c) if $a < $c;
+#        return ($b,$c,$a) if $b < $c;
+#        return ($c,$b,$a);
+#    }
+#}
+
+# -----------------------------------------------------------------
 # Fisher-Yates shuffle.
 sub shuffle($) {
     my ($list) = @_;
@@ -1267,7 +1314,7 @@ sub random($$) {
     my ($min, $max) = @_;
     return $min if $min >= $max;
     my $m = $max - $min + 1;
-    my $bytes = 1 + int(log($m) / log(256));
+    my $bytes = rshift(number_bits($m)+7, 3);
     my $rand = $rng->{get}($rng, $bytes);
     return undef if not defined $rand;
     my $n = 0;
@@ -1636,6 +1683,16 @@ sub rshift($$) {
 sub rmask($) {
     my ($n) = @_;
     return (lshift(1, $n) - 1);
+}
+
+# -----------------------------------------------------------------
+sub number_bits {
+    my ($num) = @_;
+    my $bits = 0;
+    for (; $num > 0; $num = rshift($num,1)) {
+        ++$bits;
+    }
+    return $bits;
 }
 
 # -----------------------------------------------------------------
