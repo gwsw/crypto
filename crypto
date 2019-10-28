@@ -14,9 +14,10 @@ use List::MoreUtils  qw( first_index );
 my $rng_bits_default    = 32;
 my $mr_loops_default    = 8;
 my $rabin_shift_default = 8;
-my $simple_pivot = 1;
+my $qs_pivot_default    = 'mid';
 
 my %set_alias = ( 'on' => 1, 'off' => 0 );
+my %pivot_alias = ( 'lo' => 1, 'hi' => 2, 'mid' => 3, 'med3' => 4 );
 
 my %all_rngs = (
     'std' => \&std_rng_init, 
@@ -33,6 +34,7 @@ my %all_options = (
     'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
     'no-prompt'   => [ 'b', "Don't print prompts." ],
     'perf'        => [ 'b', "Print performance stats." ],
+    'qs-pivot'    => [ 's', "QuickSort pivot (".join(',',sort keys %pivot_alias).")." ],
     'rabin-raw'   => [ 'b', "Don't pad message; decryption prints all 4 candidates." ],
     'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
     'rng'         => [ 's', "Random number generator (".join(',',sort keys %all_rngs)."). Optional bits follows colon (eg. \"bbs:64\").", \&opt_rng ],
@@ -43,6 +45,9 @@ my %all_options = (
 );
 
 my %all_commands = (
+    'bg-decrypt'      => [ \&cmd_bg_decrypt,      "{P Q N} H T X C" ],
+    'bg-encrypt'      => [ \&cmd_bg_encrypt,      "{N} MSG" ],
+    'bg-gen'          => [ \&cmd_bg_gen,          "BITS" ],
     'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S" ],
     'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG" ],
     'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
@@ -160,6 +165,8 @@ sub main {
     $opt{'rabin-shift'} = $rabin_shift_default if not $opt{'rabin-shift'};
     $opt{rng} = 'std' if not $opt{rng};
     $opt{seed} = time() if not $opt{seed};
+    $opt{'qs-pivot'} = $pivot_alias{$opt{'qs-pivot'} or $qs_pivot_default};
+    return usage() if not $opt{'qs-pivot'};
     return usage() if not set_rng($opt{rng}, $opt{seed});
 
     # Change 'crypto help' to 'crypto help shell'.
@@ -363,6 +370,18 @@ sub cmd_lcm {
 }
 
 # -----------------------------------------------------------------
+# Return a and b such that a*p - b*q = 1.
+sub euclid_pair {
+    my ($p, $q) = @_;
+    my $swap = ($p < $q);
+    if ($swap) { ($p,$q) = ($q,$p); }
+    my ($xp,$xq,$a,$b) = euclid($p, $q);
+    die if $xp != $p or $xq != $q;
+    if ($swap) { ($a,$b) = (-$b,-$a); }
+    return ($a, $b);
+}
+
+# -----------------------------------------------------------------
 sub cmd_random {
     my ($cmd, $min, $max) = args(\@_);
     return usage($cmd) if not $max;
@@ -483,6 +502,37 @@ sub cmd_eg_decrypt {
     my $msg = eg_decrypt($p,$g,$x,$r,$s);
     return cmd_fail('decrypt') if not defined $msg;
     print number($msg), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_bg_gen {
+    my ($cmd, $bits) = args(\@_);
+    return usage($cmd) if not $bits;
+    my $bg = bg_gen($bits);
+    return 0 if not $bg;
+    save_obj($bg);
+    print_map($bg, 'p','q','n');
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_bg_encrypt {
+    my ($cmd, $n,$msg) = args(\@_, 'n');
+    return usage($cmd) if not $n or not defined $msg;
+    my $enc = bg_encrypt($n, $msg);
+    return cmd_fail('encrypt') if not defined $enc;
+    print number($$enc{h}), ' ', number($$enc{t}), ' ', number($$enc{xt}), ' ', number($$enc{c}), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_bg_decrypt {
+    my ($cmd, $p,$q,$n,$h,$t,$xt,$c) = args(\@_, 'p','q','n');
+    return usage($cmd) if not $p or not $q or not defined $c;
+    my $dec = bg_decrypt($p, $q, $n, $h, $t, $xt, $c);
+    return cmd_fail('decrypt') if not defined $dec;
+    print number($dec), "\n";
     return 1;
 }
 
@@ -669,7 +719,7 @@ sub cmd_option {
             return 0;
         }
         my $value = (defined $set) ? $set : $opt{$var} ? 0 : 1;
-        if ($type eq 'i' and $value !~ /^\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
+        if ($type eq 'i' and $value !~ /^-?\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
             print "ERROR: invalid number '$value' for option $var\n";
             return 0;
         }
@@ -864,20 +914,14 @@ sub rabin_decrypt($$$$) {
     # That is, (mp*mp % p) = enc, and (mq*mq % q) = enc.
     my $mp = pow_mod($enc, rshift($p+1,2), $p);
     my $mq = pow_mod($enc, rshift($q+1,2), $q);
-
-    # Find yp and yq such that yp*p + yq*q = 1.
-    my ($xp,$xq,$yp,$yq) = euclid($p, $q);
-    die if $xp != $p or $xq != $q;
-
+    my ($a, $b) = euclid_pair($p, $q);
     # Use Chinese remainder theorem to find 4 candidates r1..r4.
-    my $t1 = xmod($yp * $p * $mq, $n);
-    my $t2 = xmod($yq * $q * $mp, $n);
-
+    my $t1 = xmod($a * $p * $mq, $n);
+    my $t2 = xmod($b * $q * $mp, $n);
     my $r1 = xmod($t1 + $t2, $n);
     my $r2 = xmod($t1 - $t2, $n);
     my $r3 = $n - $r1;
     my $r4 = $n - $r2;
-
     return ($r1, $r2, $r3, $r4);
 }
 
@@ -953,7 +997,61 @@ sub schnorr_verify($$$$$$$$) {
 }
 
 # -----------------------------------------------------------------
-# Solitaire encryption/decryption.
+# ---- Blum-Goldwasser
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub bg_gen($) {
+    my ($bits) = @_;
+    return rabin_gen($bits);
+}
+
+# -----------------------------------------------------------------
+sub bg_encrypt($$) {
+    my ($n,$msg) = @_;
+    # h = bits per block
+    my $h = number_bits(number_bits($n));
+    # t = blocks in msg
+    my $t = int((number_bits($msg) + $h-1) / $h);
+    # x = random quadratic residue mod n
+    my $r = random(1, $n);
+    my $x = mul_mod($r, $r, $n);
+    ($msg, $x) = bg_crypt($msg, $n, $h, $t, $x);
+    return { 'h' => $h, 't' => $t, 'xt' => mul_mod($x, $x, $n), 'c' => $msg };
+}
+
+# -----------------------------------------------------------------
+sub bg_decrypt($$$$$$$) {
+    my ($p,$q,$n,$h,$t,$xt,$enc) = @_;
+    my $dp = pow_mod(rshift($p+1,2), $t+1, $p-1);
+    my $dq = pow_mod(rshift($q+1,2), $t+1, $q-1);
+    my $up = pow_mod($xt, $dp, $p);
+    my $uq = pow_mod($xt, $dq, $q);
+    my ($rp, $rq) = euclid_pair($p, $q);
+    my $x = xmod($uq*$rp*$p - $up*$rq*$q, $n);
+    my ($msg) = bg_crypt($enc, $n, $h, $t, $x);
+    return $msg;
+}
+
+# -----------------------------------------------------------------
+sub bg_crypt($$$$$) {
+    my ($msg, $n, $h, $t, $x) = @_;
+    my $hmask = rmask($h);
+    my $shmask = $hmask;
+    my $enc = 0;
+    for (my $i = 0; $i < $t; ++$i) {
+        $x = mul_mod($x, $x, $n); # get keystream bits from BBS
+        $enc |= ($msg & $shmask) ^ lshift($x & $hmask, $i*$h);
+        $shmask = lshift($shmask, $h);
+    }
+    return ($enc, $x);
+}
+
+# -----------------------------------------------------------------
+# ---- Solitaire
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
 sub sol_crypt($$$) {
     my ($encrypt, $deck, $msg) = @_;
     my $res = '';
@@ -982,7 +1080,9 @@ sub sol_deck_from_key($) {
     $key =~ s/[^a-z]//ig;
     my @deck = ( 1 .. $suit_cards+$jokers ); # start with deck in standard order
     for (my $i = 0; $i < length $key; ++$i) {
-        sol_keystream(\@deck, sol_char_value(substr($key, $i, 1)));
+        my $ch = sol_char_value(substr($key, $i, 1));
+        next if $ch < 1 or $ch > 26;
+        sol_keystream(\@deck, $ch);
     }
     return \@deck;
 }
@@ -1224,14 +1324,25 @@ sub merge_sort(@) {
 
 # -----------------------------------------------------------------
 sub quick_sort(@) {
-    quick_sort_range(\@_, 0, @_-1);
+    quick_sort_range(\@_, 0, @_-1, $opt{'qs-pivot'});
     return @_;
 }
 
 sub quick_sort_range($$$) {
-    my ($arr, $lo, $hi) = @_;
-    return if $lo >= $hi;
-    my $pivot = $$arr[int(($hi+$lo)/2)];
+    my ($arr, $lo, $hi, $pivot_type) = @_;
+    return if $lo >= $hi; # 0 or 1 elements are already sorted
+    my $pivot;
+    if ($pivot_type == 1) {
+        $pivot = $$arr[$lo];
+    } elsif ($pivot_type == 2) {
+        $pivot = $$arr[$hi];
+    } elsif ($pivot_type == 3) {
+        $pivot = $$arr[int(($hi+$lo)/2)];
+    } elsif ($pivot_type == 4) {
+        my ($p1,$p2,$p3) = sort3($$arr[$lo], $$arr[$hi], $$arr[int(($hi+$lo)/2)]);
+        $pivot = $p2;
+    } else { die; }
+
     my $plo = $lo-1;
     my $phi = $hi+1;
     for (;;) {
@@ -1240,23 +1351,24 @@ sub quick_sort_range($$$) {
         last if $plo >= $phi;
         ($$arr[$plo], $$arr[$phi]) = ($$arr[$phi], $$arr[$plo]);
     }
-    quick_sort_range($arr, $lo, $phi);
-    quick_sort_range($arr, $phi+1, $hi);
+die unless $phi < $hi; # qs-pivot=hi trips this
+    quick_sort_range($arr, $lo, $phi, $pivot_type);
+    quick_sort_range($arr, $phi+1, $hi, $pivot_type);
 }
 
 # -----------------------------------------------------------------
-#sub sort3 {
-#    my ($a,$b,$c) = @_;
-#    if ($a < $b) {
-#        return ($a,$b,$c) if $b < $c;
-#        return ($a,$c,$b) if $a < $c;
-#        return ($c,$a,$b);
-#    } else {
-#        return ($b,$a,$c) if $a < $c;
-#        return ($b,$c,$a) if $b < $c;
-#        return ($c,$b,$a);
-#    }
-#}
+sub sort3 {
+    my ($a,$b,$c) = @_;
+    if ($a < $b) {
+        return ($a,$b,$c) if $b < $c;
+        return ($a,$c,$b) if $a < $c;
+        return ($c,$a,$b);
+    } else {
+        return ($b,$a,$c) if $a < $c;
+        return ($b,$c,$a) if $b < $c;
+        return ($c,$b,$a);
+    }
+}
 
 # -----------------------------------------------------------------
 # Fisher-Yates shuffle.
@@ -1765,9 +1877,9 @@ sub int_from_bytes($$) {
 # Return BigInt representation.
 sub i($) {
     my ($s) = @_;
-    return $1+0    if $s =~ /^0d(\d+)$/; # force to a BigInt
+    return $1+0    if $s =~ /^-?0d(\d+)$/; # force to a BigInt
     return hex($s) if $s =~ /^0x/i or $opt{hex};
-    return $s+0    if $s =~ /^\d+$/; # force to a BigInt
+    return $s+0    if $s =~ /^-?\d+$/; # force to a BigInt
     return undef;
 }
 
