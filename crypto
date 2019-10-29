@@ -47,7 +47,10 @@ my %all_options = (
 my %all_commands = (
     'bg-decrypt'      => [ \&cmd_bg_decrypt,      "{P Q N} H T X C" ],
     'bg-encrypt'      => [ \&cmd_bg_encrypt,      "{N} MSG" ],
-    'bg-gen'          => [ \&cmd_bg_gen,          "BITS" ],
+    'bg-gen'          => [ \&cmd_bg_gen,          "BITS QBITS" ],
+    'cs-decrypt'      => [ \&cmd_cs_decrypt,      "[P Q QBITS G1 G2 C D H] MSG" ],
+    'cs-encrypt'      => [ \&cmd_cs_encrypt,      "[P X1 X2 Y1 Y2 Z] U1 U2 E V" ],
+    'cs-gen'          => [ \&cmd_cs_gen,          "BITS" ],
     'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S" ],
     'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG" ],
     'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
@@ -535,6 +538,39 @@ sub cmd_bg_decrypt {
     print number($dec), "\n";
     return 1;
 }
+
+# -----------------------------------------------------------------
+sub cmd_cs_gen {
+    my ($cmd, $bits, $qbits) = args(\@_);
+    return usage($cmd) if not $bits or not $qbits;
+    my $cs = cs_gen($bits, $qbits);
+    return 0 if not $cs;
+    $$cs{qbits} = $qbits;
+    save_obj($cs);
+    print_map($cs, 'p','q','qbits','g1','g2','c','d','h','x1','x2','y1','y2','z');
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_cs_encrypt {
+    my ($cmd, $p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg) = args(\@_, 'p','q','qbits','g1','g2','c','d','h');
+    return usage($cmd) if not defined $msg;
+    my $enc = cs_encrypt($p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg);
+    return cmd_fail('encrypt') if not defined $enc;
+    print number($$enc{u1}), ' ', number($$enc{u2}), ' ', number($$enc{e}), ' ', number($$enc{v}), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_cs_decrypt {
+    my ($cmd, $p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v) = args(\@_, 'p','q','qbits','x1','x2','y1','y2','z');
+    return usage($cmd) if not defined $v;
+    my $dec = cs_decrypt($p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v);
+    return cmd_fail('decrypt') if not defined $dec;
+    print number($dec), "\n";
+    return 1;
+}
+
 
 # -----------------------------------------------------------------
 sub cmd_rabin_gen {
@@ -1045,6 +1081,49 @@ sub bg_crypt($$$$$) {
         $shmask = lshift($shmask, $h);
     }
     return ($enc, $x);
+}
+
+# -----------------------------------------------------------------
+# ---- Cramer-Shoup
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub cs_gen($$) {
+    my ($bits, $qbits) = @_;
+    my ($p,$q) = find_pq_prime($bits, $qbits, 2, 2);
+    my $g1 = random(2, $p);
+    my $g2 = random(2, $p);
+    my $x1 = random(2, $q);
+    my $x2 = random(2, $q);
+    my $y1 = random(2, $q);
+    my $y2 = random(2, $q);
+    my $z  = random(2, $q);
+    my $c = mul_mod(pow_mod($g1, $x1, $p), pow_mod($g2, $x2, $p), $p);
+    my $d = mul_mod(pow_mod($g1, $y1, $p), pow_mod($g2, $y2, $p), $p);
+    my $h = pow_mod($g1, $z, $p);
+    return { 'p'=>$p, 'q'=>$q, 'g1'=>$g1, 'g2'=>$g2, 'c'=>$c, 'd'=>$d, 'h'=>$h,  # public
+             'x1'=>$x1, 'x2'=>$x2, 'y1'=>$y1, 'y2'=>$y2, 'z'=>$z };     # private
+}
+
+# -----------------------------------------------------------------
+sub cs_encrypt($$$$$$$$) {
+    my ($p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg) = @_;
+    my $r = random(1, $q-1);
+    my $u1 = pow_mod($g1, $r, $p);
+    my $u2 = pow_mod($g2, $r, $p);
+    my $e = mul_mod($msg, pow_mod($h, $r, $p), $p);
+    my $a = int_from_bytes($u1.'+'.$u2.'+'.$e, $qbits);
+    my $v = mul_mod(pow_mod($c, $r, $p), pow_mod($d, $r*$a, $p), $p);
+    return { 'u1'=>$u1, 'u2'=>$u2, 'e'=>$e, 'v'=>$v };
+}
+
+# -----------------------------------------------------------------
+sub cs_decrypt($$$$$$$$$$) {
+    my ($p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v) = @_;
+    my $a = int_from_bytes($u1.'+'.$u2.'+'.$e, $qbits);
+    my $vc = mul_mod(pow_mod($u1, $x1+($y1*$a), $p), pow_mod($u2, $x2+($y2*$a), $p), $p);
+    return undef if $vc != $v;
+    return mul_mod($e, inv(pow_mod($u1, $z, $p), $p), $p);
 }
 
 # -----------------------------------------------------------------
@@ -1679,10 +1758,10 @@ sub find_blum_prime($) {
 
 # -----------------------------------------------------------------
 # Return (p,q,r) such that p is prime, q is prime and p = qr+1.
-sub find_pq_prime($$) {
-    my ($bits, $qbits) = @_;
-    my $rmax = rmask($bits-$qbits-1);
-    my $rmin = rshift($rmax,1);
+sub find_pq_prime($$;$;$) {
+    my ($bits, $qbits, $rmax, $rmin) = @_;
+    $rmax = rmask($bits-$qbits-1) if not defined $rmax;
+    $rmin = rshift($rmax,1) if not defined $rmin;
     for (;;) {
         my $q = find_prime($qbits); # pick the large factor first
         my $r = random($rmin, $rmax);
