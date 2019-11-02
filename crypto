@@ -6,6 +6,7 @@ use strict;
 use bignum;
 use Getopt::Long;
 use Digest::SHA;
+use Crypt::Cipher::AES;
 use Time::HiRes      qw( time );
 use List::Util       qw( min max );
 use List::MoreUtils  qw( first_index );
@@ -25,6 +26,7 @@ my %all_rngs = (
     'bbs' => \&bbs_rng_init, 
     'sim' => \&sim_rng_init, 
     'twi' => \&twi_rng_init, 
+    'fort' => \&fort_rng_init, 
 );
 
 my %all_options = (
@@ -71,6 +73,9 @@ my %all_commands = (
     'mul'             => [ \&cmd_mul,             "N1 N2 MOD" ],
     'msort'           => [ \&cmd_sort,            "NUM..." ],
     'option'          => [ \&cmd_option,          "[+!_]OPTION[=VALUE]..." ],
+    'ou-decrypt'      => [ \&cmd_ou_decrypt,      "[N G H] MSG" ],
+    'ou-encrypt'      => [ \&cmd_ou_encrypt,      "[N G H P Q] MSG" ],
+    'ou-gen'          => [ \&cmd_ou_gen,          "BITS" ],
     'pow'             => [ \&cmd_pow,             "BASE EXP MOD" ],
     'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
     'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG" ],
@@ -89,6 +94,9 @@ my %all_commands = (
     'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
     'sol-decrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol-encrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
+    'ss-decrypt'      => [ \&cmd_ss_decrypt,      "[N PQ D] MSG" ],
+    'ss-encrypt'      => [ \&cmd_ss_encrypt,      "[N] MSG" ],
+    'ss-gen'          => [ \&cmd_ss_gen,          "BITS" ],
     'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
 );
 
@@ -189,8 +197,9 @@ sub main {
         next if $line eq ''; # ignore empty line
         next if $line =~ /^#/; # ignore comment
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
+        my $repeat = 1;
+        if ($line =~ /(\d+)\s*\*\s*(.*)/) { $repeat = $1; $line = $2; }
         $line = $prev_line if $line eq '!!';
-        $prev_line = $line;
         # Split line on spaces and quotes, then rejoin any quoted parts.
         my @args;
         my $quoting = 0;
@@ -207,10 +216,13 @@ sub main {
                 $word = '';
             }
         }
-        if (not command(@args)) {
-            print "*** command failed\n" unless $opt{'no-prompt'};
-            $ok = 0;
+        while ($repeat-- > 0) {
+            if (not command(@args)) {
+                print "*** command failed\n" unless $opt{'no-prompt'};
+                $ok = 0;
+            }
         }
+        $prev_line = $line if $ok;
     }
     return $ok;
 }
@@ -571,6 +583,36 @@ sub cmd_cs_decrypt {
     return 1;
 }
 
+# -----------------------------------------------------------------
+sub cmd_ou_gen {
+    my ($cmd, $bits) = args(\@_);
+    return usage($cmd) if not $bits;
+    my $ou = ou_gen($bits);
+    return 0 if not $ou;
+    save_obj($ou);
+    print_map($ou, 'n','g','h','p','q');
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_ou_encrypt {
+    my ($cmd, $n, $g, $h, $msg) = args(\@_, 'n','g','h');
+    return usage($cmd) if not defined $msg;
+    my $enc = ou_encrypt($n, $g, $h, $msg);
+    return cmd_fail('encrypt') if not defined $enc;
+    print number($enc), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_ou_decrypt {
+    my ($cmd, $n, $g, $h, $p, $q, $msg) = args(\@_, 'n','g','h','p','q');
+    return usage($cmd) if not defined $msg;
+    my $dec = ou_decrypt($n, $g, $h, $p, $q, $msg);
+    return cmd_fail('decrypt') if not defined $dec;
+    print number($dec), "\n";
+    return 1;
+}
 
 # -----------------------------------------------------------------
 sub cmd_rabin_gen {
@@ -686,6 +728,37 @@ sub cmd_sol_crypt {
 }
 
 # -----------------------------------------------------------------
+sub cmd_ss_gen {
+    my ($cmd, $bits) = args(\@_);
+    return usage($cmd) if not $bits;
+    my $ss = ss_gen($bits);
+    return 0 if not $ss;
+    save_obj($ss);
+    print_map($ss, 'n','pq','d');
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_ss_encrypt {
+    my ($cmd, $n, $msg) = args(\@_, 'n');
+    return usage($cmd) if not defined $msg;
+    my $enc = ss_encrypt($n, $msg);
+    return cmd_fail('encrypt') if not defined $enc;
+    print number($enc), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_ss_decrypt {
+    my ($cmd, $n, $pq, $d, $enc) = args(\@_, 'n','pq','d');
+    return usage($cmd) if not defined $enc;
+    my $msg = ss_decrypt($n, $pq, $d, $enc);
+    return cmd_fail('decrypt') if not defined $msg;
+    print number($msg), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
 sub cmd_kx {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits;
@@ -732,7 +805,7 @@ sub cmd_option {
             $set = ($1 eq '+') ? 1 : 0;
             if ($1 eq '_') {
                 print_option($var);
-                return 1;
+                next;
             }
         } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
             $var = $1;
@@ -751,8 +824,9 @@ sub cmd_option {
         }
         my ($type, $desc, $optfunc) = @$option;
         if ($type ne 'b' and not defined $set) {
-            print "ERROR: missing = after option $var\n";
-            return 0;
+            #print "ERROR: missing = after option $var\n";
+            print_option($var);
+            next;
         }
         my $value = (defined $set) ? $set : $opt{$var} ? 0 : 1;
         if ($type eq 'i' and $value !~ /^-?\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
@@ -784,10 +858,10 @@ sub opt_rng {
 # -----------------------------------------------------------------
 sub opt_seed {
     my ($value) = @_;
-    if (not set_rng($opt{rng}, $value)) {
-        return 0;
+    if ($rng->{set_seed}) {
+        return &{$rng->{set_seed}}($rng, $value);
     }
-    return 1;
+    return set_rng($opt{rng}, $value);
 }
 
 # -----------------------------------------------------------------
@@ -919,7 +993,7 @@ sub rsa_crypt($$$) {
 # -----------------------------------------------------------------
 
 # -----------------------------------------------------------------
-sub rabin_gen($) {
+sub rabin_gen($;$) {
     my ($bits, $sign_nonce_bits) = @_;
     if (not $bits) {
         print "invalid bit length \"$bits\"\n";
@@ -1000,6 +1074,34 @@ sub rabin_msg($$$) {
 }
 
 # -----------------------------------------------------------------
+# ---- Schmidt-Samoa
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub ss_gen($) {
+    my ($bits) = @_;
+    my $bits2 = rshift($bits,1);
+    my $p = find_prime($bits2);
+    my $q = find_prime($bits-$bits2);
+    my $pq = $p * $q; 
+    my $n = $p * $pq; # n = p^2*q
+    my $d = inv($n, lcm($p-1, $q-1));
+    return { 'n'=>$n, 'pq'=>$pq, 'd'=>$d };
+}
+
+sub ss_encrypt($$) {
+    my ($n, $msg) = @_;
+    return undef if msg_too_large($msg, $n);
+    return pow_mod($msg, $n, $n);
+}
+
+sub ss_decrypt($$$$) {
+    my ($n, $pq, $d, $enc) = @_;
+    return undef if msg_too_large($enc, $n);
+    ### return pow_mod($enc, $d, $pq); #### no, need CRT?
+}
+
+# -----------------------------------------------------------------
 # ---- Schnorr
 # -----------------------------------------------------------------
 
@@ -1045,6 +1147,7 @@ sub bg_gen($) {
 # -----------------------------------------------------------------
 sub bg_encrypt($$) {
     my ($n,$msg) = @_;
+    return undef if msg_too_large($msg, $n);
     # h = bits per block
     my $h = number_bits(number_bits($n));
     # t = blocks in msg
@@ -1059,6 +1162,7 @@ sub bg_encrypt($$) {
 # -----------------------------------------------------------------
 sub bg_decrypt($$$$$$$) {
     my ($p,$q,$n,$h,$t,$xt,$enc) = @_;
+    return undef if msg_too_large($enc, $n);
     my $dp = pow_mod(rshift($p+1,2), $t+1, $p-1);
     my $dq = pow_mod(rshift($q+1,2), $t+1, $q-1);
     my $up = pow_mod($xt, $dp, $p);
@@ -1108,6 +1212,7 @@ sub cs_gen($$) {
 # -----------------------------------------------------------------
 sub cs_encrypt($$$$$$$$) {
     my ($p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg) = @_;
+    return undef if msg_too_large($msg, $q);
     my $r = random(1, $q-1);
     my $u1 = pow_mod($g1, $r, $p);
     my $u2 = pow_mod($g2, $r, $p);
@@ -1124,6 +1229,43 @@ sub cs_decrypt($$$$$$$$$$) {
     my $vc = mul_mod(pow_mod($u1, $x1+($y1*$a), $p), pow_mod($u2, $x2+($y2*$a), $p), $p);
     return undef if $vc != $v;
     return mul_mod($e, inv(pow_mod($u1, $z, $p), $p), $p);
+}
+
+# -----------------------------------------------------------------
+# ---- Okamoto-Uchiyama
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub ou_gen($) {
+    my ($bits) = @_;
+    my $p = find_prime($bits); # FIXME p,q shd get how many bits?
+    my $q = find_prime($bits);
+    my $p2 = $p * $p;
+    my $n = $p2 * $q;
+    my $g;
+    for (;;) {
+        $g = random(2, $n-1);
+        last if pow_mod($g, $p-1, $p2) != 1;
+    }
+    my $h = pow_mod($g, $n, $n);
+    return { 'n'=>$n, 'g'=>$g, 'h'=>$h, 'p'=>$p, 'q'=>$q };
+}
+
+# -----------------------------------------------------------------
+sub ou_encrypt($$$$) {
+    my ($n, $g, $h, $msg) = @_;
+    return undef if msg_too_large($msg, $n); # FIXME actually $p
+    my $r = random(1, $n-1);
+    return mul_mod(pow_mod($g, $msg, $n), pow_mod($h, $r, $n), $n);
+}
+
+# -----------------------------------------------------------------
+sub ou_decrypt($$$$$$) {
+    my ($n, $g, $h, $p, $q, $enc) = @_;
+    my $p2 = $p * $p;
+    my $num = int((pow_mod($enc, $p-1, $p2) -1) / $p);
+    my $den = int((pow_mod($g, $p-1, $p2) -1) / $p);
+    return mul_mod($num, inv($den,$p), $p); # note mod p here: msg < p
 }
 
 # -----------------------------------------------------------------
@@ -1531,6 +1673,7 @@ sub get_bytes {
 
 # -----------------------------------------------------------------
 # Standard RNG. Uses rand().
+
 sub std_rng_init($$) {
     my ($bits, $seed) = @_;
     if ($seed and length($seed) > 0) {
@@ -1546,6 +1689,7 @@ sub std_rng_get_byte($) {
 
 # -----------------------------------------------------------------
 # Simple RNG.
+
 sub sim_rng_init($$) {
     my ($bits, $seed) = @_;
     my $iseed = ($seed and length($seed) > 0) ? int_from_bytes($seed, 32) : 0;
@@ -1560,6 +1704,7 @@ sub sim_rng_get_byte($) {
 
 # -----------------------------------------------------------------
 # Secure RNG. Uses Math::Random::Secure.
+
 sub sec_rng_init($$) {
     my ($bits, $seed) = @_;
     if (not eval "require Math::Random::Secure") {
@@ -1579,6 +1724,7 @@ sub sec_rng_get_byte($) {
 
 # -----------------------------------------------------------------
 # Blum-Blum-Shub RNG.
+
 sub bbs_rng_init($$) {
     my ($bits, $seed) = @_;
     $seed = 1 if not $seed;
@@ -1609,7 +1755,8 @@ sub bbs_rng_get_byte($) {
 }
 
 # -----------------------------------------------------------------
-# Mersenne twister.
+# Mersenne twister RNG
+
 sub twi_rng_init($$) {
     my ($bits, $seed) = @_;
     my $bmask = rmask($bits);
@@ -1643,7 +1790,7 @@ sub twi_rng_get_bytes($$) {
     my $n = $twi->{n};
     my $mt = $twi->{mt};
     my $bits = $twi->{bits};
-    my $ibytes = int($bits / 8);
+    my $ibytes = rshift($bits, 3);
     my $data = '';
     while (length($data) < $bytes) {
         if ($twi->{index} >= $n) {
@@ -1673,6 +1820,103 @@ sub twi_rng_get_bytes($$) {
         }
     }
     return $data;
+}
+
+# -----------------------------------------------------------------
+# Fortuna RNG
+
+sub fort_rng_init($$) {
+    my ($bits, $seed) = @_;
+    my $num_pools = 32;
+    my $sha_size = 256;
+    my @pool;
+    my @pool_ptr;
+    for (my $i = 0; $i < $num_pools; ++$i) {
+        push @pool, { digest => new Digest::SHA($sha_size), bytes => 0 }; 
+        push @pool_ptr, 0;
+    }
+    my $fort = { 'get' => \&fort_rng_get_bytes, 'set_seed' => \&fort_rng_seed,
+        'key' => '', 'ctr' => 1,'rekey_ctr' => 0, 'sha_size' => $sha_size,
+        'key_size' => Crypt::Cipher::AES::keysize(), 
+        'cblock_size' => Crypt::Cipher::AES::blocksize(), 
+        'hblock_size' => rshift($sha_size,3),
+        'pool' => \@pool, 'pool_ptr' => \@pool_ptr };
+    fort_rng_seed($fort, $seed);
+    fort_rng_rekey($fort); # make sure we have a key
+    return $fort;
+}
+
+# Get (cblock_size byte) blocks from an encrypted counter.
+sub fort_rng_get_blocks($$) {
+    my ($fort, $blocks) = @_;
+    print "fort: get $blocks blocks, ctr $fort->{ctr}\n" if $opt{verbose};
+    my $data = '';
+    for (my $b = 0; $b < $blocks; ++$b) {
+        my $ctr = $fort->{ctr}++;
+        $ctr = substr(("0" x $fort->{cblock_size}) . $ctr, -$fort->{cblock_size});
+        $data .= $fort->{cipher}->encrypt($ctr);
+    }
+    return $data;
+}
+
+sub fort_rng_get_bytes($$) {
+    my ($fort, $bytes) = @_;
+    print "fort: get $bytes bytes\n" if $opt{verbose};
+    # First rekey if necessary.
+    my $min_pool_size = 64; # although from Schneier, this seems really arbitrary
+    my $rekey_delay = 0.100; # as does this
+    my $now = time();
+    if (${$fort->{pool}}[0]->{bytes} >= $min_pool_size and $now > $fort->{last_rekey} + $rekey_delay) {
+        $fort->{last_rekey} = $now;
+        fort_rng_rekey($fort);
+    }
+    # Get bytes from get_blocks.
+    my $bsize = $fort->{cblock_size};
+    my $data = fort_rng_get_blocks($fort, int(($bytes + $bsize-1) / $bsize));
+    $data = substr($data, 0, $bytes); # trim last block
+    # Finally, change the key.
+    fort_rng_setkey($fort, fort_rng_get_blocks($fort, $fort->{key_size} / $fort->{cblock_size}));
+    return $data;
+}
+
+# Add entropy to the pools.
+sub fort_rng_seed($$) {
+    my ($fort, $seed) = @_;
+    my $src = 0;
+    my $data = pack('CC', $src, length $seed) . $seed;
+    my $poolx = ${$fort->{pool_ptr}}[$src];
+    print "fort: seed with ",length($seed)," bytes in ",${$fort->{pool}}[$poolx]->{bytes},"-byte pool $poolx, src $src\n" if $opt{verbose};
+    ${$fort->{pool}}[$poolx]->{digest}->add($data);
+    ${$fort->{pool}}[$poolx]->{bytes} += length($data);
+    $poolx = 0 if ++$poolx >= @{$fort->{pool}}; # round robin
+    ${$fort->{pool_ptr}}[$src] = $poolx;
+    return 1;
+}
+
+# Set key with entropy from some of the pools.
+sub fort_rng_rekey {
+    my ($fort) = @_;
+    my $rekey_ctr = ++($fort->{rekey_ctr});
+    print "fort: rekey $rekey_ctr\n" if $opt{verbose};
+    my $seed = '';
+    my $ti = 1;
+    for (my $i = 0; $i < @{$fort->{pool}}; ++$i, $ti = lshift($ti,1)) {
+        # Take pool i if 2^i divides rekey_ctr.
+        next if int($rekey_ctr / $ti) * $ti != $rekey_ctr;
+        print "fort: take pool $i\n" if $opt{verbose};
+        $seed .= ${$fort->{pool}}[$i]->{digest}->digest;
+        ${$fort->{pool}}[$i]->{digest}->reset($fort->{sha_size});
+        ${$fort->{pool}}[$i]->{bytes} = 0;
+    }
+    fort_rng_setkey($fort, Digest::SHA::sha256($fort->{key} . $seed));
+    $fort->{ctr}++;
+}
+
+sub fort_rng_setkey($$) {
+    my ($fort, $key) = @_;
+    print "fort: set key ",length($key)," bytes\n" if $opt{verbose};
+    $fort->{key} = substr($key, 0, $fort->{key_size});
+    $fort->{cipher} = new Crypt::Cipher::AES($fort->{key});
 }
 
 
@@ -1895,6 +2139,11 @@ sub xmod($$) {
     return ($n + $a) % $m;
 }
 
+# -----------------------------------------------------------------
+sub quo_rem($$) {
+    my ($num, $den) = @_;
+    return $num->bdiv($den);
+}
 
 
 # -----------------------------------------------------------------
@@ -2013,4 +2262,3 @@ sub read_file($$) {
     }
     return $data;
 }
-
