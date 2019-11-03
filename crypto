@@ -309,183 +309,96 @@ sub cmd_help {
     return 1;
 }
 
-# -----------------------------------------------------------------
-sub cmd_euclid {
-    my ($cmd, $u, $v) = args(\@_);
-    return usage($cmd) if not defined $v;
-    if ($u < $v) { ($u,$v) = ($v,$u); }
-    my ($w,$x,$a,$b,$gcd,$k) = euclid($u, $v);
-    my $ngcd = number($gcd);
-    print $ngcd, ' = ', number($a), ' * ', number($w), ' - ', number($b), ' * ', number($x), "\n";
-    if ($k > 0) {
-        print (' ' x length($ngcd));
-        print ' = (', number($a), ' * ', number($u), ' - ', number($b), ' * ', number($v), ') >> ', number($k), "\n";
-    }
-    if ($gcd == 1) {
-        print number($x), '^-1 mod ', number($w), ' = ', number($w-$b), "\n";
-    }
-    return 1;
-}
 
 # -----------------------------------------------------------------
-sub cmd_pow {
-    my ($cmd, $base, $exp, $mod) = args(\@_);
-    return usage($cmd) if not $mod;
-    my $n = pow_mod($base, $exp, $mod);
-    print number($n), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_mul {
-    my ($cmd, $n1, $n2, $mod) = args(\@_);
-    return usage($cmd) if not $mod;
-    my $n = mul_mod($n1, $n2, $mod);
-    print number($n), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_find_prime {
+sub cmd_bg_gen {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits;
-    my $n = find_prime($bits);
-    print number($n), "\n";
+    my $bg = bg_gen($bits);
+    return 0 if not $bg;
+    save_obj($bg);
+    print_map($bg, 'p','q','n');
     return 1;
 }
 
 # -----------------------------------------------------------------
-sub cmd_find_pq_prime {
-    my ($cmd, $bits, $qbits) = args(\@_);
-    return usage($cmd) if not $qbits;
-    my ($p,$q,$r) = find_pq_prime($bits, $qbits);
-    print number($p), ' = ', number($q), ' * ', number($r), " +1\n";
+sub cmd_bg_encrypt {
+    my ($cmd, $n,$msg) = args(\@_, 'n');
+    return usage($cmd) if not $n or not defined $msg;
+    my $enc = bg_encrypt($n, $msg);
+    return cmd_fail('encrypt') if not defined $enc;
+    print number($$enc{h}), ' ', number($$enc{t}), ' ', number($$enc{xt}), ' ', number($$enc{c}), "\n";
     return 1;
 }
 
 # -----------------------------------------------------------------
-sub cmd_is_prime {
-    my ($cmd, $num) = args(\@_);
-    return usage($cmd) if not $num;
-    print is_prime($num) ? "probably prime\n" : "composite\n";
+sub cmd_bg_decrypt {
+    my ($cmd, $p,$q,$n,$h,$t,$xt,$c) = args(\@_, 'p','q','n');
+    return usage($cmd) if not $p or not $q or not defined $c;
+    my $dec = bg_decrypt($p, $q, $n, $h, $t, $xt, $c);
+    return cmd_fail('decrypt') if not defined $dec;
+    print number($dec), "\n";
     return 1;
 }
 
 # -----------------------------------------------------------------
-sub cmd_gcd {
-    my ($cmd, $u, $v) = args(\@_);
-    return usage($cmd) if not defined $v;
-    my $gcd = gcd($u, $v);
-    print number($gcd), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_inv {
-    my ($cmd, $num, $mod) = args(\@_);
-    return usage($cmd) if not defined $mod;
-    my $inv = inv($num, $mod);
-    print number($inv), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_lcm {
-    my ($cmd, $u, $v) = args(\@_);
-    return usage($cmd) if not defined $v;
-    my $lcm = lcm($u, $v);
-    print number($lcm), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-# Return a and b such that a*p - b*q = 1.
-sub euclid_pair {
-    my ($p, $q) = @_;
-    my $swap = ($p < $q);
-    if ($swap) { ($p,$q) = ($q,$p); }
-    my ($xp,$xq,$a,$b) = euclid($p, $q);
-    die if $xp != $p or $xq != $q;
-    if ($swap) { ($a,$b) = (-$b,-$a); }
-    return ($a, $b);
-}
-
-# -----------------------------------------------------------------
-sub cmd_random {
-    my ($cmd, $min, $max) = args(\@_);
-    return usage($cmd) if not defined $min;
-    if (not defined $max) {
-        $max = $min;
-        $min = 0;
+sub cmd_ccn {
+    my ($cmd, $flag, $ccn) = @_;
+    my $gen = ($flag and $flag eq '-g');
+    $ccn = $flag if not $gen;
+    return usage($cmd) if not defined $ccn;
+    my $ch = ($cmd eq 'luhn') ? luhn($ccn, $gen) : verhoeff($ccn, $gen);
+    if (not defined $ch) {
+        print "INVALID DIGIT\n";
+        return 0;
+    } elsif ($gen) {
+        print "$ccn$ch\n";
+    } elsif ($ch == 0) {
+        print "ok\n";
+    } else {
+        print "INVALID CHECK\n";
+        return 0;
     }
-    return usage($cmd) if $max < $min;
-    my $n = random($min, $max);
-    return cmd_fail("RNG($rng->{name})") if not defined $n;
-    print number($n), "\n";
     return 1;
 }
 
 # -----------------------------------------------------------------
-sub cmd_random_bytes {
-    my ($cmd, $bytes) = args(\@_);
-    return usage($cmd) if not $bytes;
-    my $data = $rng->{get}($rng, $bytes);
-    return cmd_fail("RNG($rng->{name})") if not $data;
-    print_bin($data);
+sub cmd_cs_gen {
+    my ($cmd, $bits, $qbits) = args(\@_);
+    return usage($cmd) if not $bits or not $qbits;
+    my $cs = cs_gen($bits, $qbits);
+    return 0 if not $cs;
+    $$cs{qbits} = $qbits;
+    save_obj($cs);
+    print_map($cs, 'p','q','qbits','g1','g2','c','d','h','x1','x2','y1','y2','z');
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_cs_encrypt {
+    my ($cmd, $p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg) = args(\@_, 'p','q','qbits','g1','g2','c','d','h');
+    return usage($cmd) if not defined $msg;
+    my $enc = cs_encrypt($p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg);
+    return cmd_fail('encrypt') if not defined $enc;
+    print number($$enc{u1}), ' ', number($$enc{u2}), ' ', number($$enc{e}), ' ', number($$enc{v}), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_cs_decrypt {
+    my ($cmd, $p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v) = args(\@_, 'p','q','qbits','x1','x2','y1','y2','z');
+    return usage($cmd) if not defined $v;
+    my $dec = cs_decrypt($p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v);
+    return cmd_fail('decrypt') if not defined $dec;
+    print number($dec), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_echo {
+    my $cmd = shift @_;
+    print join ' ', @_;
     print "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_shuffle {
-    my ($cmd, $num) = args(\@_);
-    return usage($cmd) if not $num;
-    my @nums = 1 .. $num;
-    shuffle(\@nums);
-    print join(' ', @nums), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_sort {
-    my ($cmd, @list) = args(\@_);
-    return usage($cmd) if not @list;
-    my @sorted =
-        ($cmd eq 'isort') ? insertl_sort(@list) :
-        ($cmd eq 'ibsort') ? insertb_sort(@list) :
-        ($cmd eq 'msort') ? merge_sort(@list) :
-        ($cmd eq 'qsort') ? quick_sort(@list) :
-        ();
-    print join(' ', @sorted), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_rsa_gen {
-    my ($cmd, $bits) = args(\@_);
-    return usage($cmd) if not $bits or $bits < 3;
-    my $rsa = rsa_gen($bits);
-    return 0 if not $rsa;
-    save_obj($rsa);
-    print_map($rsa, 'e','d','n');
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_rsa_encrypt {
-    my ($cmd, $n,$e,$msg) = args(\@_, 'n','e');
-    return usage($cmd) if not $n or not $e or not defined $msg;
-    my $num = rsa_crypt($msg, $e, $n);
-    print number($num), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_rsa_decrypt {
-    my ($cmd, $n,$d,$msg) = args(\@_, 'n','d');
-    return usage($cmd) if not $n or not $d or not defined $msg;
-    my $num = rsa_crypt($msg, $d, $n);
-    print number($num), "\n";
     return 1;
 }
 
@@ -540,73 +453,149 @@ sub cmd_eg_decrypt {
 }
 
 # -----------------------------------------------------------------
-sub cmd_bg_gen {
+sub cmd_euclid {
+    my ($cmd, $u, $v) = args(\@_);
+    return usage($cmd) if not defined $v;
+    if ($u < $v) { ($u,$v) = ($v,$u); }
+    my ($w,$x,$a,$b,$gcd,$k) = euclid($u, $v);
+    my $ngcd = number($gcd);
+    print $ngcd, ' = ', number($a), ' * ', number($w), ' - ', number($b), ' * ', number($x), "\n";
+    if ($k > 0) {
+        print (' ' x length($ngcd));
+        print ' = (', number($a), ' * ', number($u), ' - ', number($b), ' * ', number($v), ') >> ', number($k), "\n";
+    }
+    if ($gcd == 1) {
+        print number($x), '^-1 mod ', number($w), ' = ', number($w-$b), "\n";
+    }
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_find_prime {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits;
-    my $bg = bg_gen($bits);
-    return 0 if not $bg;
-    save_obj($bg);
-    print_map($bg, 'p','q','n');
+    my $n = find_prime($bits);
+    print number($n), "\n";
     return 1;
 }
 
 # -----------------------------------------------------------------
-sub cmd_bg_encrypt {
-    my ($cmd, $n,$msg) = args(\@_, 'n');
-    return usage($cmd) if not $n or not defined $msg;
-    my $enc = bg_encrypt($n, $msg);
-    return cmd_fail('encrypt') if not defined $enc;
-    print number($$enc{h}), ' ', number($$enc{t}), ' ', number($$enc{xt}), ' ', number($$enc{c}), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_bg_decrypt {
-    my ($cmd, $p,$q,$n,$h,$t,$xt,$c) = args(\@_, 'p','q','n');
-    return usage($cmd) if not $p or not $q or not defined $c;
-    my $dec = bg_decrypt($p, $q, $n, $h, $t, $xt, $c);
-    return cmd_fail('decrypt') if not defined $dec;
-    print number($dec), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_cs_gen {
+sub cmd_find_pq_prime {
     my ($cmd, $bits, $qbits) = args(\@_);
-    return usage($cmd) if not $bits or not $qbits;
-    my $cs = cs_gen($bits, $qbits);
-    return 0 if not $cs;
-    $$cs{qbits} = $qbits;
-    save_obj($cs);
-    print_map($cs, 'p','q','qbits','g1','g2','c','d','h','x1','x2','y1','y2','z');
+    return usage($cmd) if not $qbits;
+    my ($p,$q,$r) = find_pq_prime($bits, $qbits);
+    print number($p), ' = ', number($q), ' * ', number($r), " +1\n";
     return 1;
 }
 
 # -----------------------------------------------------------------
-sub cmd_cs_encrypt {
-    my ($cmd, $p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg) = args(\@_, 'p','q','qbits','g1','g2','c','d','h');
-    return usage($cmd) if not defined $msg;
-    my $enc = cs_encrypt($p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg);
-    return cmd_fail('encrypt') if not defined $enc;
-    print number($$enc{u1}), ' ', number($$enc{u2}), ' ', number($$enc{e}), ' ', number($$enc{v}), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_cs_decrypt {
-    my ($cmd, $p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v) = args(\@_, 'p','q','qbits','x1','x2','y1','y2','z');
+sub cmd_gcd {
+    my ($cmd, $u, $v) = args(\@_);
     return usage($cmd) if not defined $v;
-    my $dec = cs_decrypt($p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v);
-    return cmd_fail('decrypt') if not defined $dec;
-    print number($dec), "\n";
+    my $gcd = gcd($u, $v);
+    print number($gcd), "\n";
     return 1;
 }
 
 # -----------------------------------------------------------------
-sub cmd_echo {
+sub cmd_inv {
+    my ($cmd, $num, $mod) = args(\@_);
+    return usage($cmd) if not defined $mod;
+    my $inv = inv($num, $mod);
+    print number($inv), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_is_prime {
+    my ($cmd, $num) = args(\@_);
+    return usage($cmd) if not $num;
+    print is_prime($num) ? "probably prime\n" : "composite\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_kx {
+    my ($cmd, $bits) = args(\@_);
+    return usage($cmd) if not $bits;
+    dh_key_exchange($bits);
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_lcm {
+    my ($cmd, $u, $v) = args(\@_);
+    return usage($cmd) if not defined $v;
+    my $lcm = lcm($u, $v);
+    print number($lcm), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_mul {
+    my ($cmd, $n1, $n2, $mod) = args(\@_);
+    return usage($cmd) if not $mod;
+    my $n = mul_mod($n1, $n2, $mod);
+    print number($n), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_option {
     my $cmd = shift @_;
-    print join ' ', @_;
-    print "\n";
+    if (not @_) { # print all options
+        foreach my $var (sort keys %all_options) {
+            print_option($var);
+        }
+        return 1;
+    }
+    foreach my $var (@_) {
+        # var may be 'name', '!name', '+name', 'name=value'.
+        my $set = undef;
+        if (substr($var,0,1) eq '-') { $var = substr($var,1); } # ignore leading dash
+        if ($var =~ /^ ([?!+]) (.*) \s*$/x) { # ?name or !name or +name
+            $var = $2;
+            $set = ($1 eq '+') ? 1 : 0;
+            if ($1 eq '?') {
+                print_option($var);
+                next;
+            }
+        } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
+            $var = $1;
+            $set = $2;
+        } elsif ($var =~ /^ ([^=]+) = (.*) \s*$ /x) { # name=value
+            $var = $1;
+            $set = $2;
+        }
+        if (defined $set and defined $set_alias{lc($set)}) {
+            $set = $set_alias{lc($set)};
+        }
+        my $option = $all_options{$var};
+        if (not $option) {
+            print "ERROR: invalid option $var\n";
+            return 0;
+        }
+        my ($type, $desc, $optfunc) = @$option;
+        if ($type ne 'b' and not defined $set) {
+            #print "ERROR: missing = after option $var\n";
+            print_option($var);
+            next;
+        }
+        my $value = (defined $set) ? $set : $opt{$var} ? 0 : 1;
+        if ($type eq 'i' and $value !~ /^-?\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
+            print "ERROR: invalid number '$value' for option $var\n";
+            return 0;
+        }
+        if ($type eq 'b' and $value ne '0' and $value ne '1') {
+            print "ERROR: invalid boolean '$value' for option $var (use 0,1 or on,off)\n";
+            return 0;
+        }
+        if ($optfunc and not &$optfunc($value)) { # call option handler, if any
+            return 0;
+        }
+        $opt{$var} = $value;
+        print_option($var);
+    }
     return 1;
 }
 
@@ -638,6 +627,15 @@ sub cmd_ou_decrypt {
     my $dec = ou_decrypt($n, $g, $h, $p, $q, $msg);
     return cmd_fail('decrypt') if not defined $dec;
     print number($dec), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_pow {
+    my ($cmd, $base, $exp, $mod) = args(\@_);
+    return usage($cmd) if not $mod;
+    my $n = pow_mod($base, $exp, $mod);
+    print number($n), "\n";
     return 1;
 }
 
@@ -705,6 +703,70 @@ sub cmd_rabin_verify {
     return 1;
 }
 
+# -----------------------------------------------------------------
+sub cmd_random {
+    my ($cmd, $min, $max) = args(\@_);
+    return usage($cmd) if not defined $min;
+    if (not defined $max) {
+        $max = $min;
+        $min = 0;
+    }
+    return usage($cmd) if $max < $min;
+    my $n = random($min, $max);
+    return cmd_fail("RNG($rng->{name})") if not defined $n;
+    print number($n), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_random_bytes {
+    my ($cmd, $bytes) = args(\@_);
+    return usage($cmd) if not $bytes;
+    my $data = $rng->{get}($rng, $bytes);
+    return cmd_fail("RNG($rng->{name})") if not $data;
+    print_bin($data);
+    print "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_rsa_gen {
+    my ($cmd, $bits) = args(\@_);
+    return usage($cmd) if not $bits or $bits < 3;
+    my $rsa = rsa_gen($bits);
+    return 0 if not $rsa;
+    save_obj($rsa);
+    print_map($rsa, 'e','d','n');
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_rsa_encrypt {
+    my ($cmd, $n,$e,$msg) = args(\@_, 'n','e');
+    return usage($cmd) if not $n or not $e or not defined $msg;
+    my $num = rsa_crypt($msg, $e, $n);
+    print number($num), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_rsa_decrypt {
+    my ($cmd, $n,$d,$msg) = args(\@_, 'n','d');
+    return usage($cmd) if not $n or not $d or not defined $msg;
+    my $num = rsa_crypt($msg, $d, $n);
+    print number($num), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_shuffle {
+    my ($cmd, $num) = args(\@_);
+    return usage($cmd) if not $num;
+    my @nums = 1 .. $num;
+    shuffle(\@nums);
+    print join(' ', @nums), "\n";
+    return 1;
+}
 
 # -----------------------------------------------------------------
 sub cmd_schnorr_gen {
@@ -755,6 +817,20 @@ sub cmd_sol_crypt {
 }
 
 # -----------------------------------------------------------------
+sub cmd_sort {
+    my ($cmd, @list) = args(\@_);
+    return usage($cmd) if not @list;
+    my @sorted =
+        ($cmd eq 'isort') ? insertl_sort(@list) :
+        ($cmd eq 'ibsort') ? insertb_sort(@list) :
+        ($cmd eq 'msort') ? merge_sort(@list) :
+        ($cmd eq 'qsort') ? quick_sort(@list) :
+        ();
+    print join(' ', @sorted), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
 sub cmd_ss_gen {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits;
@@ -782,94 +858,6 @@ sub cmd_ss_decrypt {
     my $msg = ss_decrypt($n, $pq, $d, $enc);
     return cmd_fail('decrypt') if not defined $msg;
     print number($msg), "\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_kx {
-    my ($cmd, $bits) = args(\@_);
-    return usage($cmd) if not $bits;
-    dh_key_exchange($bits);
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_ccn {
-    my ($cmd, $flag, $ccn) = @_;
-    my $gen = ($flag and $flag eq '-g');
-    $ccn = $flag if not $gen;
-    return usage($cmd) if not defined $ccn;
-    my $ch = ($cmd eq 'luhn') ? luhn($ccn, $gen) : verhoeff($ccn, $gen);
-    if (not defined $ch) {
-        print "INVALID DIGIT\n";
-        return 0;
-    } elsif ($gen) {
-        print "$ccn$ch\n";
-    } elsif ($ch == 0) {
-        print "ok\n";
-    } else {
-        print "INVALID CHECK\n";
-        return 0;
-    }
-    return 1;
-}
-
-# -----------------------------------------------------------------
-sub cmd_option {
-    my $cmd = shift @_;
-    if (not @_) { # print all options
-        foreach my $var (sort keys %all_options) {
-            print_option($var);
-        }
-        return 1;
-    }
-    foreach my $var (@_) {
-        # var may be 'name', '!name', '+name', 'name=value'.
-        my $set = undef;
-        if (substr($var,0,1) eq '-') { $var = substr($var,1); } # ignore leading dash
-        if ($var =~ /^ ([?!+]) (.*) \s*$/x) { # ?name or !name or +name
-            $var = $2;
-            $set = ($1 eq '+') ? 1 : 0;
-            if ($1 eq '?') {
-                print_option($var);
-                next;
-            }
-        } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
-            $var = $1;
-            $set = $2;
-        } elsif ($var =~ /^ ([^=]+) = (.*) \s*$ /x) { # name=value
-            $var = $1;
-            $set = $2;
-        }
-        if (defined $set and defined $set_alias{lc($set)}) {
-            $set = $set_alias{lc($set)};
-        }
-        my $option = $all_options{$var};
-        if (not $option) {
-            print "ERROR: invalid option $var\n";
-            return 0;
-        }
-        my ($type, $desc, $optfunc) = @$option;
-        if ($type ne 'b' and not defined $set) {
-            #print "ERROR: missing = after option $var\n";
-            print_option($var);
-            next;
-        }
-        my $value = (defined $set) ? $set : $opt{$var} ? 0 : 1;
-        if ($type eq 'i' and $value !~ /^-?\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
-            print "ERROR: invalid number '$value' for option $var\n";
-            return 0;
-        }
-        if ($type eq 'b' and $value ne '0' and $value ne '1') {
-            print "ERROR: invalid boolean '$value' for option $var (use 0,1 or on,off)\n";
-            return 0;
-        }
-        if ($optfunc and not &$optfunc($value)) { # call option handler, if any
-            return 0;
-        }
-        $opt{$var} = $value;
-        print_option($var);
-    }
     return 1;
 }
 
@@ -1016,7 +1004,7 @@ sub rsa_crypt($$$) {
 }
 
 # -----------------------------------------------------------------
-# --- Rabin Encryption
+# --- Rabin 
 # -----------------------------------------------------------------
 
 # -----------------------------------------------------------------
@@ -1051,7 +1039,7 @@ sub rabin_decrypt($$$$) {
     # That is, (mp*mp % p) = enc, and (mq*mq % q) = enc.
     my $mp = pow_mod($enc, rshift($p+1,2), $p);
     my $mq = pow_mod($enc, rshift($q+1,2), $q);
-    my ($a, $b) = euclid_pair($p, $q);
+    my ($a, $b) = bezout_pair($p, $q);
     # Use Chinese remainder theorem to find 4 candidates r1..r4.
     my $t1 = xmod($a * $p * $mq, $n);
     my $t2 = xmod($b * $q * $mp, $n);
@@ -1194,7 +1182,7 @@ sub bg_decrypt($$$$$$$) {
     my $dq = pow_mod(rshift($q+1,2), $t+1, $q-1);
     my $up = pow_mod($xt, $dp, $p);
     my $uq = pow_mod($xt, $dq, $q);
-    my ($rp, $rq) = euclid_pair($p, $q);
+    my ($rp, $rq) = bezout_pair($p, $q);
     my $x = xmod($uq*$rp*$p - $up*$rq*$q, $n);
     my ($msg) = bg_crypt($enc, $n, $h, $t, $x);
     return $msg;
@@ -2078,6 +2066,18 @@ sub euclid($$) {
     }
     $u1 = lshift($u1,$k); $u2 = lshift($u2,$k); $u3 = lshift($u3,$k);
     return ($u, $v, $u1, $u2, $u3, $k);
+}
+
+# -----------------------------------------------------------------
+# Return a and b such that a*p - b*q = 1.
+sub bezout_pair {
+    my ($p, $q) = @_;
+    my $swap = ($p < $q);
+    if ($swap) { ($p,$q) = ($q,$p); }
+    my ($xp,$xq,$a,$b) = euclid($p, $q);
+    die if $xp != $p or $xq != $q;
+    if ($swap) { ($a,$b) = (-$b,-$a); }
+    return ($a, $b);
 }
 
 # -----------------------------------------------------------------
