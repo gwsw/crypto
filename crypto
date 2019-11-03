@@ -72,7 +72,7 @@ my %all_commands = (
     'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
     'mul'             => [ \&cmd_mul,             "N1 N2 MOD" ],
     'msort'           => [ \&cmd_sort,            "NUM..." ],
-    'option'          => [ \&cmd_option,          "[+!_]OPTION[=VALUE]..." ],
+    'option'          => [ \&cmd_option,          "[+!?]OPTION[=VALUE]..." ],
     'ou-decrypt'      => [ \&cmd_ou_decrypt,      "[N G H] MSG" ],
     'ou-encrypt'      => [ \&cmd_ou_encrypt,      "[N G H P Q] MSG" ],
     'ou-gen'          => [ \&cmd_ou_gen,          "BITS" ],
@@ -82,7 +82,7 @@ my %all_commands = (
     'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS [SIGN_NONCE_BITS]" ],
     'rabin-sign'      => [ \&cmd_rabin_sign,      "{P Q N BITS SIGN_NONCE_BITS} MSG" ],
     'rabin-verify'    => [ \&cmd_rabin_verify,    "{N BITS} U X MSG" ],
-    'random'          => [ \&cmd_random,          "MIN MAX" ],
+    'random'          => [ \&cmd_random,          "[MIN] MAX" ],
     'random-bytes'    => [ \&cmd_random_bytes,    "BYTES" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
     'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
@@ -132,6 +132,7 @@ sub usage(;$) {
         if (not $command) {
             print "invalid command \"$cmd\"\n";
         } else {
+            print "usage:\n";
             usage_cmd($cmd, $command, 0);
         }
     } else { # all commands
@@ -219,7 +220,8 @@ sub main {
         while ($repeat-- > 0) {
             if (not command(@args)) {
                 print "*** command failed\n" unless $opt{'no-prompt'};
-                $ok = 0;
+                #$ok = 0;
+                last;
             }
         }
         $prev_line = $line if $ok;
@@ -399,7 +401,12 @@ sub euclid_pair {
 # -----------------------------------------------------------------
 sub cmd_random {
     my ($cmd, $min, $max) = args(\@_);
-    return usage($cmd) if not $max;
+    return usage($cmd) if not defined $min;
+    if (not defined $max) {
+        $max = $min;
+        $min = 0;
+    }
+    return usage($cmd) if $max < $min;
     my $n = random($min, $max);
     return cmd_fail("RNG($rng->{name})") if not defined $n;
     print number($n), "\n";
@@ -800,10 +807,10 @@ sub cmd_option {
         # var may be 'name', '!name', '+name', 'name=value'.
         my $set = undef;
         if (substr($var,0,1) eq '-') { $var = substr($var,1); } # ignore leading dash
-        if ($var =~ /^ ([_!+]) (.*) \s*$/x) { # _name or !name or +name
+        if ($var =~ /^ ([?!+]) (.*) \s*$/x) { # ?name or !name or +name
             $var = $2;
             $set = ($1 eq '+') ? 1 : 0;
-            if ($1 eq '_') {
+            if ($1 eq '?') {
                 print_option($var);
                 next;
             }
@@ -1151,7 +1158,7 @@ sub bg_encrypt($$) {
     # h = bits per block
     my $h = number_bits(number_bits($n));
     # t = blocks in msg
-    my $t = int((number_bits($msg) + $h-1) / $h);
+    my $t = idiv(number_bits($msg) + $h-1, $h);
     # x = random quadratic residue mod n
     my $r = random(1, $n);
     my $x = mul_mod($r, $r, $n);
@@ -1263,8 +1270,8 @@ sub ou_encrypt($$$$) {
 sub ou_decrypt($$$$$$) {
     my ($n, $g, $h, $p, $q, $enc) = @_;
     my $p2 = $p * $p;
-    my $num = int((pow_mod($enc, $p-1, $p2) -1) / $p);
-    my $den = int((pow_mod($g, $p-1, $p2) -1) / $p);
+    my $num = idiv(pow_mod($enc, $p-1, $p2) -1, $p);
+    my $den = idiv(pow_mod($g, $p-1, $p2) -1, $p);
     return mul_mod($num, inv($den,$p), $p); # note mod p here: msg < p
 }
 
@@ -1823,7 +1830,7 @@ sub twi_rng_get_bytes($$) {
 }
 
 # -----------------------------------------------------------------
-# Fortuna RNG
+# Fortuna RNG, with AES and SHA-256
 
 sub fort_rng_init($$) {
     my ($bits, $seed) = @_;
@@ -1833,7 +1840,6 @@ sub fort_rng_init($$) {
     my @pool_ptr;
     for (my $i = 0; $i < $num_pools; ++$i) {
         push @pool, { digest => new Digest::SHA($sha_size), bytes => 0 }; 
-        push @pool_ptr, 0;
     }
     my $fort = { 'get' => \&fort_rng_get_bytes, 'set_seed' => \&fort_rng_seed,
         'key' => '', 'ctr' => 1,'rekey_ctr' => 0, 'sha_size' => $sha_size,
@@ -1846,16 +1852,18 @@ sub fort_rng_init($$) {
     return $fort;
 }
 
-# Get (cblock_size byte) blocks from an encrypted counter.
+# Get random data from an encrypted counter.
 sub fort_rng_get_blocks($$) {
-    my ($fort, $blocks) = @_;
-    print "fort: get $blocks blocks, ctr $fort->{ctr}\n" if $opt{verbose};
+    my ($fort, $bytes) = @_;
+    my $bsize = $fort->{cblock_size};
+    my $blocks = idiv($bytes + $bsize-1, $bsize);
+    print "fort: get_blocks $bytes bytes, $blocks blocks, ctr $fort->{ctr}\n" if $opt{verbose};
     my $data = '';
     for (my $b = 0; $b < $blocks; ++$b) {
-        my $ctr = $fort->{ctr}++;
-        $ctr = substr(("0" x $fort->{cblock_size}) . $ctr, -$fort->{cblock_size});
+        my $ctr = binary_integer($fort->{ctr}++, $bsize);
         $data .= $fort->{cipher}->encrypt($ctr);
     }
+    $data = substr($data, 0, $bytes); # trim last block
     return $data;
 }
 
@@ -1871,21 +1879,20 @@ sub fort_rng_get_bytes($$) {
         fort_rng_rekey($fort);
     }
     # Get bytes from get_blocks.
-    my $bsize = $fort->{cblock_size};
-    my $data = fort_rng_get_blocks($fort, int(($bytes + $bsize-1) / $bsize));
-    $data = substr($data, 0, $bytes); # trim last block
+    my $data = fort_rng_get_blocks($fort, $bytes);
     # Finally, change the key.
-    fort_rng_setkey($fort, fort_rng_get_blocks($fort, $fort->{key_size} / $fort->{cblock_size}));
+    fort_rng_setkey($fort, fort_rng_get_blocks($fort, $fort->{key_size}));
     return $data;
 }
 
 # Add entropy to the pools.
 sub fort_rng_seed($$) {
-    my ($fort, $seed) = @_;
-    my $src = 0;
+    my ($fort, $seed, $src) = @_;
+    my $src = 0 if not $src;
     my $data = pack('CC', $src, length $seed) . $seed;
     my $poolx = ${$fort->{pool_ptr}}[$src];
-    print "fort: seed with ",length($seed)," bytes in ",${$fort->{pool}}[$poolx]->{bytes},"-byte pool $poolx, src $src\n" if $opt{verbose};
+    $poolx = 0 if not $poolx;
+    print "fort: seed ",length($seed)," bytes into ",${$fort->{pool}}[$poolx]->{bytes},"-byte pool [$poolx]\n" if $opt{verbose};
     ${$fort->{pool}}[$poolx]->{digest}->add($data);
     ${$fort->{pool}}[$poolx]->{bytes} += length($data);
     $poolx = 0 if ++$poolx >= @{$fort->{pool}}; # round robin
@@ -1902,9 +1909,9 @@ sub fort_rng_rekey {
     my $ti = 1;
     for (my $i = 0; $i < @{$fort->{pool}}; ++$i, $ti = lshift($ti,1)) {
         # Take pool i if 2^i divides rekey_ctr.
-        next if int($rekey_ctr / $ti) * $ti != $rekey_ctr;
+        next if idiv($rekey_ctr, $ti) * $ti != $rekey_ctr;
         print "fort: take pool $i\n" if $opt{verbose};
-        $seed .= ${$fort->{pool}}[$i]->{digest}->digest;
+        $seed .= ${$fort->{pool}}[$i]->{digest}->digest();
         ${$fort->{pool}}[$i]->{digest}->reset($fort->{sha_size});
         ${$fort->{pool}}[$i]->{bytes} = 0;
     }
@@ -1915,6 +1922,7 @@ sub fort_rng_rekey {
 sub fort_rng_setkey($$) {
     my ($fort, $key) = @_;
     print "fort: set key ",length($key)," bytes\n" if $opt{verbose};
+    die "key too small" if length($key) < $fort->{key_size};
     $fort->{key} = substr($key, 0, $fort->{key_size});
     $fort->{cipher} = new Crypt::Cipher::AES($fort->{key});
 }
@@ -2075,9 +2083,7 @@ sub lcm($$) {
     my ($u, $v) = @_;
     my $gcd = gcd($u, $v);
     return undef if not $gcd;
-    my $r = $u * $v;
-    $r->bdiv($gcd);
-    return $r;
+    return idiv($u * $v, $gcd);
 }
 
 # -----------------------------------------------------------------
@@ -2140,9 +2146,23 @@ sub xmod($$) {
 }
 
 # -----------------------------------------------------------------
-sub quo_rem($$) {
+# Integer division
+sub idiv($$) {
     my ($num, $den) = @_;
-    return $num->bdiv($den);
+    die if $num < 0 or $den <= 0;
+    ## return $num->bdiv($den);  FIXME why doesn't this work?
+    return int($num / $den);
+}
+
+# -----------------------------------------------------------------
+sub binary_integer($$) {
+    my ($num, $bytes) = @_;
+    my $bin = '';
+    for (my $i = 0; $i < $bytes; ++$i) {
+        $bin .= chr($num & 0xFF);
+        $num = rshift($num, 8);
+    }
+    return $bin;
 }
 
 
@@ -2154,7 +2174,8 @@ sub quo_rem($$) {
 sub args(+@) {
     my $args = shift @_;
     my @rargs;
-    push @rargs, shift @$args;
+    my $cmd = shift @$args;
+    push @rargs, $cmd;
     foreach my $arg (@$args) {
         if ($arg eq '-') {
             foreach my $var (@_) {
@@ -2164,7 +2185,7 @@ sub args(+@) {
         ##     $flags .= $1;
         } else {
             my $val = i($arg);
-            return undef if not defined $val;
+            return ($cmd) if not defined $val;
             push @rargs, $val;
         }
     }
