@@ -74,8 +74,8 @@ my %all_commands = (
     'mul'             => [ \&cmd_mul,             "N1 N2 MOD" ],
     'msort'           => [ \&cmd_sort,            "NUM..." ],
     'option'          => [ \&cmd_option,          "[+!?]OPTION[=VALUE]..." ],
-    'ou-decrypt'      => [ \&cmd_ou_decrypt,      "[N G H] MSG" ],
-    'ou-encrypt'      => [ \&cmd_ou_encrypt,      "[N G H P Q] MSG" ],
+    'ou-decrypt'      => [ \&cmd_ou_decrypt,      "[N G H P Q] MSG" ],
+    'ou-encrypt'      => [ \&cmd_ou_encrypt,      "[N G H] MSG" ],
     'ou-gen'          => [ \&cmd_ou_gen,          "BITS" ],
     'pow'             => [ \&cmd_pow,             "BASE EXP MOD" ],
     'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
@@ -98,6 +98,7 @@ my %all_commands = (
     'ss-decrypt'      => [ \&cmd_ss_decrypt,      "[N PQ D] MSG" ],
     'ss-encrypt'      => [ \&cmd_ss_encrypt,      "[N] MSG" ],
     'ss-gen'          => [ \&cmd_ss_gen,          "BITS" ],
+    'var'             => [ \&cmd_var,             "" ],
     'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
 );
 
@@ -110,7 +111,7 @@ my $jokerB       = $jokerA+1;
 # Global variables.
 my $rng; # the active RNG, returned from *_rng_init
 my %opt; # currently set options
-my $saved;
+my %saved;
 
 
 # -----------------------------------------------------------------
@@ -191,7 +192,6 @@ sub main {
     # Interactive mode.
     my $ok = 1;
     my $prev_line = '';
-    my %uvar = ( 'begin' => time() );
     for (;;) {
         printf "> " unless $opt{'no-prompt'};
         my $line = <>;
@@ -202,7 +202,7 @@ sub main {
         next if $line =~ /^#/; # ignore comment
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
         while ($line =~ /^([^\$]*)\$([({]?)(\w+)([)}]?)(.*)$/) {
-            my $v = $uvar{$3};
+            my $v = $saved{$3};
             $v = '?' if not defined $v;
             $line = $1 . $v . $5;
         }
@@ -227,7 +227,7 @@ sub main {
         }
         while ($repeat-- > 0) {
             if (@args == 1 and $args[0] =~ /^(\w+)=(.*)$/) {
-                $uvar{$1} = $2;
+                $saved{$1} = $2;
                 next;
             }
             if (not command(@args)) {
@@ -858,6 +858,15 @@ sub cmd_ss_decrypt {
     my $msg = ss_decrypt($n, $pq, $d, $enc);
     return cmd_fail('decrypt') if not defined $msg;
     print number($msg), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_var {
+    my ($cmd) = @_;
+    for my $var (sort keys %saved) {
+        printf "%-12s %s\n", $var, $saved{$var};
+    }
     return 1;
 }
 
@@ -2200,7 +2209,7 @@ sub args(+@) {
     foreach my $arg (@$args) {
         if ($arg eq '-') {
             foreach my $var (@_) {
-                push @rargs, $$saved{$var};
+                push @rargs, $saved{$var};
             }
         ## } elsif ($arg =~ /^-([a-z]+)/) {
         ##     $flags .= $1;
@@ -2280,11 +2289,9 @@ sub print_bin($) {
 # -----------------------------------------------------------------
 sub save_obj(%) {
     my ($old) = @_;
-    my %new;
     while (my ($k,$v) = each %$old) {
-        $new{$k} = $v;
+        $saved{$k} = $v;
     }
-    $saved = \%new;
 }
 
 # -----------------------------------------------------------------
