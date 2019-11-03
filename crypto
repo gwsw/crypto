@@ -1887,8 +1887,8 @@ sub fort_rng_get_bytes($$) {
 
 # Add entropy to the pools.
 sub fort_rng_seed($$) {
-    my ($fort, $seed, $src) = @_;
-    my $src = 0 if not $src;
+    my ($fort, $seed) = @_;
+    my $src = 0; # should be a parameter
     my $data = pack('CC', $src, length $seed) . $seed;
     my $poolx = ${$fort->{pool_ptr}}[$src];
     $poolx = 0 if not $poolx;
@@ -1905,17 +1905,18 @@ sub fort_rng_rekey {
     my ($fort) = @_;
     my $rekey_ctr = ++($fort->{rekey_ctr});
     print "fort: rekey $rekey_ctr\n" if $opt{verbose};
-    my $seed = '';
+    my $key_digest = new Digest::SHA($fort->{sha_size});
+    $key_digest->add($fort->{key}); # mix in existing key
     my $ti = 1;
     for (my $i = 0; $i < @{$fort->{pool}}; ++$i, $ti = lshift($ti,1)) {
         # Take pool i if 2^i divides rekey_ctr.
         next if idiv($rekey_ctr, $ti) * $ti != $rekey_ctr;
         print "fort: take pool $i\n" if $opt{verbose};
-        $seed .= ${$fort->{pool}}[$i]->{digest}->digest();
+        $key_digest->add(${$fort->{pool}}[$i]->{digest}->digest());
         ${$fort->{pool}}[$i]->{digest}->reset($fort->{sha_size});
         ${$fort->{pool}}[$i]->{bytes} = 0;
     }
-    fort_rng_setkey($fort, Digest::SHA::sha256($fort->{key} . $seed));
+    fort_rng_setkey($fort, $key_digest->digest());
     $fort->{ctr}++;
 }
 
