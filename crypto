@@ -53,6 +53,7 @@ my %all_commands = (
     'cs-decrypt'      => [ \&cmd_cs_decrypt,      "[P Q QBITS G1 G2 C D H] MSG" ],
     'cs-encrypt'      => [ \&cmd_cs_encrypt,      "[P X1 X2 Y1 Y2 Z] U1 U2 E V" ],
     'cs-gen'          => [ \&cmd_cs_gen,          "BITS" ],
+    'echo'            => [ \&cmd_echo,            "STRING" ],
     'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S" ],
     'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG" ],
     'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
@@ -137,6 +138,7 @@ sub usage(;$) {
         }
     } else { # all commands
         print " commands: (values in {} may be '-' if preceded by *-gen)\n";
+        print "  VAR=VALUE\n";
         foreach my $wcmd (sort keys %all_commands) {
             usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt);
         }
@@ -189,6 +191,7 @@ sub main {
     # Interactive mode.
     my $ok = 1;
     my $prev_line = '';
+    my %uvar = ( 'begin' => time() );
     for (;;) {
         printf "> " unless $opt{'no-prompt'};
         my $line = <>;
@@ -198,6 +201,11 @@ sub main {
         next if $line eq ''; # ignore empty line
         next if $line =~ /^#/; # ignore comment
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
+        while ($line =~ /^([^\$]*)\$([({]?)(\w+)([)}]?)(.*)$/) {
+            my $v = $uvar{$3};
+            $v = '?' if not defined $v;
+            $line = $1 . $v . $5;
+        }
         my $repeat = 1;
         if ($line =~ /(\d+)\s*\*\s*(.*)/) { $repeat = $1; $line = $2; }
         $line = $prev_line if $line eq '!!';
@@ -218,6 +226,10 @@ sub main {
             }
         }
         while ($repeat-- > 0) {
+            if (@args == 1 and $args[0] =~ /^(\w+)=(.*)$/) {
+                $uvar{$1} = $2;
+                next;
+            }
             if (not command(@args)) {
                 print "*** command failed\n" unless $opt{'no-prompt'};
                 #$ok = 0;
@@ -587,6 +599,14 @@ sub cmd_cs_decrypt {
     my $dec = cs_decrypt($p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v);
     return cmd_fail('decrypt') if not defined $dec;
     print number($dec), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_echo {
+    my $cmd = shift @_;
+    print join ' ', @_;
+    print "\n";
     return 1;
 }
 
