@@ -207,7 +207,7 @@ sub main {
             $line = $1 . $v . $5;
         }
         my $repeat = 1;
-        if ($line =~ /(\d+)\s*\*\s*(.*)/) { $repeat = $1; $line = $2; }
+        if ($line =~ /^(\d+)\s*\*\s*(.*)/) { $repeat = $1; $line = $2; }
         $line = $prev_line if $line eq '!!';
         # Split line on spaces and quotes, then rejoin any quoted parts.
         my @args;
@@ -226,8 +226,9 @@ sub main {
             }
         }
         while ($repeat-- > 0) {
-            if (@args == 1 and $args[0] =~ /^(\w+)=(.*)$/) {
-                $saved{$1} = $2;
+            if (@args == 1 and $args[0] =~ /^(\w+)(:?)=(.*)$/) {
+                my $val = ($2 eq ':') ? eval($3) : $3;
+                $saved{$1} = $val;
                 next;
             }
             if (not command(@args)) {
@@ -280,7 +281,7 @@ sub command(@) {
         my $end = first_index { $_ eq ';' or $_ eq '&' } @_;
         $end = scalar(@_) if $end < 0;
         my $termchar = ($end < @_) ? $_[$end] : '';
-        my @args = splice @_, 0, $end;
+        my @args = splice @_, 0, $end; # remove args from @_
         my $quit_on_error = 0;
         if ($termchar) {
             die if $termchar ne shift(@_); # discard termchar
@@ -550,7 +551,7 @@ sub cmd_option {
         return 1;
     }
     foreach my $var (@_) {
-        # var may be 'name', '!name', '+name', 'name=value'.
+        # var may be 'name', '!name', '+name', '?name', 'name=value'.
         my $set = undef;
         if (substr($var,0,1) eq '-') { $var = substr($var,1); } # ignore leading dash
         if ($var =~ /^ ([?!+]) (.*) \s*$/x) { # ?name or !name or +name
@@ -1405,8 +1406,8 @@ sub sol_print_deck($) {
     my $print_cards = $opt{cards};
     for (my $i = 0; $i < @$deck; ++$i) {
         my $card = $$deck[$i];
-        my $pr_card = $print_cards ? sol_playing_card($card) : $card;
-        print $pr_card, ' ';
+        $card = sol_playing_card($card) if $print_cards;
+        print $card, ' ';
         print "\n" if $print_cards and $i == (sol_cards() / 2) - 1;
     }
     print "\n";
