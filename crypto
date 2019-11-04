@@ -201,11 +201,6 @@ sub main {
         next if $line eq ''; # ignore empty line
         next if $line =~ /^#/; # ignore comment
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
-        while ($line =~ /^([^\$]*)\$([({]?)(\w+)([)}]?)(.*)$/) {
-            my $v = $saved{$3};
-            $v = '?' if not defined $v;
-            $line = $1 . $v . $5;
-        }
         my $repeat = 1;
         if ($line =~ /^(\d+)\s*\*\s*(.*)/) { $repeat = $1; $line = $2; }
         $line = $prev_line if $line eq '!!';
@@ -226,18 +221,13 @@ sub main {
             }
         }
         while ($repeat-- > 0) {
-            if (@args == 1 and $args[0] =~ /^(\w+)(:?)=(.*)$/) {
-                my $val = ($2 eq ':') ? eval($3) : $3;
-                $saved{$1} = $val;
-                next;
-            }
             if (not command(@args)) {
                 print "*** command failed\n" unless $opt{'no-prompt'};
-                #$ok = 0;
+                $ok = 0;
                 last;
             }
         }
-        $prev_line = $line if $ok;
+        $prev_line = $line;
     }
     return $ok;
 }
@@ -271,17 +261,32 @@ sub set_rng($$) {
 sub command(@) {
     my $ret = 1;
     while (@_) {
-        my $cmd = $_[0];
-        my $command = $all_commands{$cmd};
-        if (not $command) {
-            print "invalid command \"$cmd\"; use \"help\" for help\n";
-            last;
-        }
         # See if there is a termchar (';' or '&').
         my $end = first_index { $_ eq ';' or $_ eq '&' } @_;
         $end = scalar(@_) if $end < 0;
         my $termchar = ($end < @_) ? $_[$end] : '';
         my @args = splice @_, 0, $end; # remove args from @_
+        # Expand $VARs in args.
+        for (my $i = 0; $i < @args; ++$i) {
+            my $arg = $args[$i];
+            while ($arg =~ /^([^\$]*) \$ ([({]?) (\w+) ([)}]?) (.*)$/x) {
+                my $v = $saved{$3};
+                $v = '?' if not defined $v;
+                $arg = $1 . $v . $5;
+            }
+            $args[$i] = $arg;
+        }
+        my $cmd = $args[0];
+        if ($cmd =~ /^(\w+) (:?)= (.*)$/x) {
+            my $val = ($2 eq ':') ? eval($3) : $3;
+            $saved{$1} = $val;
+            last;
+        }
+        my $command = $all_commands{$cmd};
+        if (not $command) {
+            print "invalid command \"$cmd\"; use \"help\" for help\n";
+            last;
+        }
         my $quit_on_error = 0;
         if ($termchar) {
             die if $termchar ne shift(@_); # discard termchar
