@@ -12,6 +12,7 @@ use List::Util       qw( min max );
 use List::MoreUtils  qw( first_index );
 
 # Constants
+my $bits_per_byte       = 8;
 my $rng_bits_default    = 32;
 my $mr_loops_default    = 8;
 my $rabin_shift_default = 8;
@@ -85,6 +86,7 @@ my %all_commands = (
     'rabin-verify'    => [ \&cmd_rabin_verify,    "{N BITS} U X MSG" ],
     'random'          => [ \&cmd_random,          "[MIN] MAX" ],
     'random-bytes'    => [ \&cmd_random_bytes,    "BYTES" ],
+    'random-string'   => [ \&cmd_random_string,   "CHARS ALPHABET" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
     'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
     'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
@@ -201,8 +203,6 @@ sub main {
         next if $line eq ''; # ignore empty line
         next if $line =~ /^#/; # ignore comment
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
-        my $repeat = 1;
-        if ($line =~ /^(\d+)\s*\*\s*(.*)/) { $repeat = $1; $line = $2; }
         $line = $prev_line if $line eq '!!';
         # Split line on spaces and quotes, then rejoin any quoted parts.
         my @args;
@@ -211,21 +211,16 @@ sub main {
         foreach my $arg (split /(\s+|")/, $line.' ') {
             if ($arg eq '"') {
                 $quoting = not $quoting;
-            } elsif ($quoting) { # add everything to word while quoting
+            } elsif ($quoting or $arg !~ /^\s*$/) {
                 $word .= $arg;
-            } elsif ($arg !~ /^\s*$/) { # add nonspace string to word
-                $word .= $arg; 
             } elsif ($arg =~ /\s+/) { # unquoted space = end of word
                 push @args, $word;
                 $word = '';
             }
         }
-        while ($repeat-- > 0) {
-            if (not command(@args)) {
-                print "*** command failed\n" unless $opt{'no-prompt'};
-                $ok = 0;
-                last;
-            }
+        if (not command(@args)) {
+            print "*** command failed\n" unless $opt{'no-prompt'};
+            $ok = 0;
         }
         $prev_line = $line;
     }
@@ -242,7 +237,7 @@ sub set_rng($$) {
     if ($seed =~ /^(\d{1,12})\@(\S+)$/) {
         $seed = read_file($2, $1);
         return 0 if not defined $seed;
-        print "seed from $2: "; print_bin($seed); print "\n";
+        if ($opt{verbose}) { print "seed from $2: "; print_bin($seed); print "\n" }
     }
     my $rng_init = $all_rngs{$rname};
     if (not $rng_init) {
@@ -276,6 +271,8 @@ sub command(@) {
             }
             $args[$i] = $arg;
         }
+        my $repeat = 1;
+        if ($args[0] =~ /^(\d+)\*$/) { $repeat = $1; shift @args; }
         my $cmd = $args[0];
         if ($cmd =~ /^(\w+) (:?)= (.*)$/x) {
             my $val = ($2 eq ':') ? eval($3) : $3;
@@ -294,7 +291,10 @@ sub command(@) {
         }
         my ($handler) = @$command;
         my $start_time = time();
-        $ret = &$handler(@args); # run the cmd
+        while ($repeat-- > 0) {
+            $ret = &$handler(@args); # run the cmd
+            last if not $ret and $quit_on_error;
+        }
         printf "=%.6f sec\n", time()-$start_time if $opt{perf};
         last if not $ret and $quit_on_error;
     }
@@ -558,14 +558,14 @@ sub cmd_option {
     foreach my $var (@_) {
         # var may be 'name', '!name', '+name', '?name', 'name=value'.
         my $set = undef;
-        if (substr($var,0,1) eq '-') { $var = substr($var,1); } # ignore leading dash
+        while (substr($var,0,1) eq '-') { $var = substr($var,1); } # ignore leading dashes
         if ($var =~ /^ ([?!+]) (.*) \s*$/x) { # ?name or !name or +name
             $var = $2;
-            $set = ($1 eq '+') ? 1 : 0;
             if ($1 eq '?') {
                 print_option($var);
                 next;
             }
+            $set = ($1 eq '+') ? 1 : 0;
         } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
             $var = $1;
             $set = $2;
@@ -588,9 +588,12 @@ sub cmd_option {
             next;
         }
         my $value = (defined $set) ? $set : $opt{$var} ? 0 : 1;
-        if ($type eq 'i' and $value !~ /^-?\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
-            print "ERROR: invalid number '$value' for option $var\n";
-            return 0;
+        if ($type eq 'i') {
+            if ($value !~ /^-?(0d)?\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
+                print "ERROR: invalid number '$value' for option $var\n";
+                return 0;
+            }
+            $value = i($value);
         }
         if ($type eq 'b' and $value ne '0' and $value ne '1') {
             print "ERROR: invalid boolean '$value' for option $var (use 0,1 or on,off)\n";
@@ -736,6 +739,29 @@ sub cmd_random_bytes {
 }
 
 # -----------------------------------------------------------------
+sub cmd_random_string {
+    my ($cmd, $chars, $alpha) = @_;
+    return usage($cmd) if not $alpha;
+    # Expand dashes "a-h" => "abcdefgh" etc.
+    my $dash;
+    while (($dash = index($alpha, '-')) > 0 and $dash+1 < length $alpha) {
+        my $pch = ord substr $alpha, $dash-1, 1;
+        my $nch = ord substr $alpha, $dash+1, 1;
+        my $a = substr($alpha, 0, $dash);
+        while ($pch < $nch) { $a .= chr(++$pch); }
+        $a .= substr($alpha, $dash+2);
+        $alpha = $a;
+    }
+    my $str = '';
+    for (my $i = 0; $i < $chars; ++$i) {
+        my $r = random(0, length($alpha)-1);
+        $str .= substr($alpha, $r, 1);
+    }
+    print "$str\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
 sub cmd_rsa_gen {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits or $bits < 3;
@@ -870,9 +896,7 @@ sub cmd_ss_decrypt {
 # -----------------------------------------------------------------
 sub cmd_var {
     my ($cmd) = @_;
-    for my $var (sort keys %saved) {
-        printf "%-12s %s\n", $var, $saved{$var};
-    }
+    print_map(\%saved);
     return 1;
 }
 
@@ -1677,19 +1701,23 @@ sub random($$) {
     my ($min, $max) = @_;
     return $min if $min >= $max;
     my $m = $max - $min + 1;
-    my $bytes = rshift(number_bits($m)+7, 3);
-    my $rand = $rng->{get}($rng, $bytes);
-    return undef if not defined $rand;
-    my $n = 0;
-    for (my $i = 0; $i < $bytes; ++$i) {
-        $n = lshift($n,8) + ord(substr($rand,$i,1));
+    my $bytes = int((number_bits($m) + $bits_per_byte-1) / $bits_per_byte);
+    my $rmax = idiv(lshift(1,8*$bytes), $m) * $m;
+    for (;;) {
+        my $rand = $rng->{get}($rng, $bytes);
+        return undef if not defined $rand;
+        my $n = 0;
+        for (my $i = 0; $i < $bytes; ++$i) {
+            $n = lshift($n, $bits_per_byte) + ord(substr($rand,$i,1));
+        }
+        if ($n < $rmax) { # this makes the mod unbiased
+            return $min + ($n % $m);
+        }
     }
-    # FIXME: mod here is biased.
-    $n = ($n % $m);
-    return $min + $n;
 }
 
 # -----------------------------------------------------------------
+# Generic get_bytes which just iterates get_byte.
 sub get_bytes {
     my ($obj, $bytes) = @_;
     my $data = '';
@@ -1718,7 +1746,7 @@ sub std_rng_get_byte($) {
 }
 
 # -----------------------------------------------------------------
-# Simple RNG.
+# Simple linear congruential RNG.
 
 sub sim_rng_init($$) {
     my ($bits, $seed) = @_;
@@ -1768,20 +1796,40 @@ sub bbs_rng_init($$) {
         return undef if not $x;
         --$x;
     }
-    return { 'get' => \&get_bytes, 'get_byte' => \&bbs_rng_get_byte, 'n' => $rn, 'x' => $x };
+    return { 'get' => \&bbs_rng_get_bytes,
+             'n' => $rn, 'x' => $x, 'k' => number_bits(number_bits($rn)) };
 }
 
-sub bbs_rng_get_byte($) {
-    my ($bbs) = @_;
+sub bbs_rng_get_bytes($) {
+    my ($bbs, $bytes) = @_;
+    my $want_bits = $bytes * 8;
     my $n = $bbs->{n};
     my $x = $bbs->{x};
+    my $k = $bbs->{k};
+    my $kmask = rmask($k);
     my $byte = 0;
-    for (my $i = 0; $i < 8; ++$i) {
-        $x = mul_mod($x, $x, $n);
-        $byte = lshift($byte,1) | ($x & 1);
+    my $byte_bits = 0;
+    my $rand;
+    my $rand_bits = 0;
+    # Build data one bit at a time.
+    my $data = '';
+    while ($want_bits-- > 0) {
+        if ($rand_bits == 0) {
+            $x = mul_mod($x, $x, $n);
+            $rand = $x; # ($x & $kmask) isn't necessary
+            $rand_bits = $k;
+        }
+        $byte = lshift($byte,1) | ($rand & 1);
+        $rand = rshift($rand, 1);
+        --$rand_bits;
+        if (++$byte_bits >= 8) {
+            $data .= chr($byte);
+            $byte_bits = 0;
+            $byte = 0;
+        }
     }
     $bbs->{x} = $x;
-    return $byte;
+    return $data;
 }
 
 # -----------------------------------------------------------------
@@ -2279,6 +2327,7 @@ sub number($) {
 # -----------------------------------------------------------------
 sub print_map(+@) {
     my $map = shift @_;
+    @_ = sort keys %$map if not @_;
     foreach my $key (@_) {
         print $key, '= ', number($$map{$key}), "\n";
     }
