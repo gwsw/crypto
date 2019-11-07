@@ -10,6 +10,7 @@ use Crypt::Cipher::AES;
 use Time::HiRes      qw( time );
 use List::Util       qw( min max );
 use List::MoreUtils  qw( first_index );
+use Term::ReadLine::Tiny;
 
 # Constants
 my $bits_per_byte       = 8;
@@ -192,18 +193,18 @@ sub main {
     return command(@ARGV) if @ARGV; # crypto command is on cmd line
 
     # Interactive mode.
+    my $term = new Term::ReadLine::Tiny;
     my $ok = 1;
     my $prev_line = '';
     for (;;) {
-        printf "> " unless $opt{'no-prompt'};
-        my $line = <>;
+        my $prompt = $opt{'no-prompt'} ? '' : '>';
+        my $line = $term->readline($prompt);
         last if not defined $line;
         $line =~ s/^\s+//; # rm leading space
         $line =~ s/\s+$//; # rm trailing space, \r, \n
         next if $line eq ''; # ignore empty line
         next if $line =~ /^#/; # ignore comment
         last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
-        $line = $prev_line if $line eq '!!';
         # Split line on spaces and quotes, then rejoin any quoted parts.
         my @args;
         my $quoting = 0;
