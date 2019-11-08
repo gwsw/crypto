@@ -229,31 +229,6 @@ sub main {
 }
 
 # -----------------------------------------------------------------
-sub set_rng($$) {
-    my ($rname, $seed) = @_;
-    my $bits = $rng_bits_default;
-    if ($rname =~ /^ ([^:]+) : (\d+)$ /x) {
-        ($rname, $bits) = ($1,$2);
-    }
-    if ($seed =~ /^(\d{1,12})\@(\S+)$/) {
-        $seed = read_file($2, $1);
-        return 0 if not defined $seed;
-        if ($opt{verbose}) { print "seed from $2: "; print_bin($seed); print "\n" }
-    }
-    my $rng_init = $all_rngs{$rname};
-    if (not $rng_init) {
-        print "ERROR: invalid RNG \"$rname\"\n";
-        return 0;
-    }
-    my $new_rng = &$rng_init($bits, $seed);
-    return 0 if not $new_rng;
-    $new_rng->{name} = $rname;
-    $rng = $new_rng;
-    ##print "RNG: $rname:$bits\n";
-    return 1;
-}
-
-# -----------------------------------------------------------------
 sub command(@) {
     my $ret = 1;
     while (@_) {
@@ -559,14 +534,10 @@ sub cmd_option {
     foreach my $var (@_) {
         # var may be 'name', '!name', '+name', '?name', 'name=value'.
         my $set = undef;
-        while (substr($var,0,1) eq '-') { $var = substr($var,1); } # ignore leading dashes
-        if ($var =~ /^ ([?!+]) (.*) \s*$/x) { # ?name or !name or +name
+        $var =~ s/^-+//; # ignore leading dashes
+        if ($var =~ /^ ([?!+]) ([\w-]*) $/x) { # ?name or !name or +name
             $var = $2;
-            if ($1 eq '?') {
-                print_option($var);
-                next;
-            }
-            $set = ($1 eq '+') ? 1 : 0;
+            $set = ($1 eq '?') ? -1 : ($1 eq '+') ? 1 : 0;
         } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
             $var = $1;
             $set = $2;
@@ -583,8 +554,7 @@ sub cmd_option {
             return 0;
         }
         my ($type, $desc, $optfunc) = @$option;
-        if ($type ne 'b' and not defined $set) {
-            #print "ERROR: missing = after option $var\n";
+        if ((defined $set and $set < 0) or ($type ne 'b' and not defined $set)) {
             print_option($var);
             next;
         }
@@ -595,10 +565,11 @@ sub cmd_option {
                 return 0;
             }
             $value = i($value);
-        }
-        if ($type eq 'b' and $value ne '0' and $value ne '1') {
-            print "ERROR: invalid boolean '$value' for option $var (use 0,1 or on,off)\n";
-            return 0;
+        } elsif ($type eq 'b') {
+            if ($value ne '0' and $value ne '1') {
+                print "ERROR: invalid boolean '$value' for option $var (use 0,1 or on,off)\n";
+                return 0;
+            }
         }
         if ($optfunc and not &$optfunc($value)) { # call option handler, if any
             return 0;
@@ -1694,6 +1665,31 @@ sub shuffle($) {
 # -----------------------------------------------------------------
 # ---- Random numbers
 # -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub set_rng($$) {
+    my ($rname, $seed) = @_;
+    my $bits = $rng_bits_default;
+    if ($rname =~ /^ ([^:]+) : (\d+)$ /x) {
+        ($rname, $bits) = ($1,$2);
+    }
+    if ($seed =~ /^(\d{1,12})\@(\S+)$/) {
+        $seed = read_file($2, $1);
+        return 0 if not defined $seed;
+        if ($opt{verbose}) { print "seed from $2: "; print_bin($seed); print "\n" }
+    }
+    my $rng_init = $all_rngs{$rname};
+    if (not $rng_init) {
+        print "ERROR: invalid RNG \"$rname\"\n";
+        return 0;
+    }
+    my $new_rng = &$rng_init($bits, $seed);
+    return 0 if not $new_rng;
+    $new_rng->{name} = $rname;
+    $rng = $new_rng;
+    ##print "RNG: $rname:$bits\n";
+    return 1;
+}
 
 # -----------------------------------------------------------------
 # Return random integer between $min and $max inclusive.
