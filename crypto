@@ -10,7 +10,6 @@ use Crypt::Cipher::AES;
 use Time::HiRes      qw( time );
 use List::Util       qw( min max );
 use List::MoreUtils  qw( first_index );
-use Term::ReadLine::Tiny;
 
 # Constants
 my $bits_per_byte       = 8;
@@ -88,6 +87,9 @@ my %all_commands = (
     'random'          => [ \&cmd_random,          "[MIN] MAX" ],
     'random-bytes'    => [ \&cmd_random_bytes,    "BYTES" ],
     'random-string'   => [ \&cmd_random_string,   "CHARS ALPHABET" ],
+    'rc4-encrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
+    'rc4-decrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
+    'rc4-key'         => [ \&cmd_rc4_key,         "KEY BYTES" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
     'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
     'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
@@ -142,7 +144,9 @@ sub usage(;$) {
         }
     } else { # all commands
         print " commands: (values in {} may be '-' if preceded by *-gen)\n";
-        print "  VAR=VALUE\n";
+        print " command may be prefixed with \"NUM* \" to repeat.\n";
+        print "  VAR=STRING\n";
+        print "  VAR:=EXPR\n";
         foreach my $wcmd (sort keys %all_commands) {
             usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt);
         }
@@ -193,12 +197,20 @@ sub main {
     return command(@ARGV) if @ARGV; # crypto command is on cmd line
 
     # Interactive mode.
-    my $term = new Term::ReadLine::Tiny;
+    my $term;
+    if (eval "require Term::ReadLine::Tiny") {
+        $term = new Term::ReadLine::Tiny;
+    }
     my $ok = 1;
-    my $prev_line = '';
     for (;;) {
         my $prompt = $opt{'no-prompt'} ? '' : '>';
-        my $line = $term->readline($prompt);
+        my $line;
+        if ($term) {
+            $line = $term->readline($prompt);
+        } else {
+            print $prompt;
+            $line = <>;
+        }
         last if not defined $line;
         $line =~ s/^\s+//; # rm leading space
         $line =~ s/\s+$//; # rm trailing space, \r, \n
@@ -223,7 +235,6 @@ sub main {
             print "*** command failed\n" unless $opt{'no-prompt'};
             $ok = 0;
         }
-        $prev_line = $line;
     }
     return $ok;
 }
@@ -734,6 +745,25 @@ sub cmd_random_string {
 }
 
 # -----------------------------------------------------------------
+sub cmd_rc4_crypt {
+    my ($cmd, $k,$msg) = args(\@_);
+    return usage($cmd) if not defined $msg;
+    my $mlen = number_bytes($msg);
+    my $num = rc4_crypt($k, $msg, $mlen);
+    print number($num), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_rc4_key {
+    my ($cmd, $k, $bytes) = args(\@_);
+    return usage($cmd) if not defined $bytes;
+    my $num = rc4_crypt($k, 0, $bytes);
+    print number($num), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
 sub cmd_rsa_gen {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits or $bits < 3;
@@ -1050,8 +1080,8 @@ sub rabin_decrypt($$$$) {
     # That is, (mp*mp % p) = enc, and (mq*mq % q) = enc.
     my $mp = pow_mod($enc, rshift($p+1,2), $p);
     my $mq = pow_mod($enc, rshift($q+1,2), $q);
-    my ($a, $b) = bezout_pair($p, $q);
     # Use Chinese remainder theorem to find 4 candidates r1..r4.
+    my ($a, $b) = bezout_pair($p, $q);
     my $t1 = xmod($a * $p * $mq, $n);
     my $t2 = xmod($b * $q * $mp, $n);
     my $r1 = xmod($t1 + $t2, $n);
@@ -1100,6 +1130,47 @@ sub rabin_msg($$$) {
 }
 
 # -----------------------------------------------------------------
+# ---- RC4
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub rc4_crypt {
+    my ($k, $msg, $mlen) = @_;
+    my $rc = rc4_gen($k);
+    my $i = $rc->{i};
+    my $j = $rc->{j};
+    my $s = $rc->{s};
+    my $ff = rmask($bits_per_byte);
+    while ($mlen-- > 0) {
+        $i = ($i + 1) & $ff;
+        $j = ($j + $$s[$i]) & $ff;
+        ($$s[$i], $$s[$j]) = ($$s[$j], $$s[$i]);
+        my $keybyte = $$s[($$s[$i] + $$s[$j]) & $ff];
+        $msg ^= $keybyte << ($mlen * $bits_per_byte);
+    }
+    $rc->{i} = $i;
+    $rc->{j} = $j;
+    return $msg;
+}
+
+# -----------------------------------------------------------------
+sub rc4_gen($) {
+    my ($k) = @_;
+    my $klen = number_bytes($k);
+    my $ff = rmask($bits_per_byte);
+    my @s = (0 .. 255);
+    my $kx = $klen-1;
+    my $dx = 0;
+    for (my $i = 0; $i <= 255; ++$i) {
+        $dx = ($dx + $s[$i] + rshift($k, $kx * $bits_per_byte)) & $ff;
+        ($s[$i], $s[$dx]) = ($s[$dx], $s[$i]);
+        if (--$kx < 0) { $kx = $klen-1; }
+    }
+    return { 's'=>\@s, 'i'=>0, 'j'=>0 };
+}
+
+
+# -----------------------------------------------------------------
 # ---- Schmidt-Samoa
 # -----------------------------------------------------------------
 
@@ -1115,12 +1186,14 @@ sub ss_gen($) {
     return { 'n'=>$n, 'pq'=>$pq, 'd'=>$d };
 }
 
+# -----------------------------------------------------------------
 sub ss_encrypt($$) {
     my ($n, $msg) = @_;
     return undef if msg_too_large($msg, $n);
     return pow_mod($msg, $n, $n);
 }
 
+# -----------------------------------------------------------------
 sub ss_decrypt($$$$) {
     my ($n, $pq, $d, $enc) = @_;
     return undef if msg_too_large($enc, $n);
@@ -1144,6 +1217,7 @@ sub schnorr_gen($$) {
     return { 'p' => $p, 'q' => $q, 'a' => $a, 'qbits' => $qbits, 's' => $s, 'v' => $v };
 }
 
+# -----------------------------------------------------------------
 sub schnorr_sign($$$$$$) {
     my ($p, $q, $a, $qbits, $s, $msg) = @_;
     my $r = random(1, $q-1);
@@ -1203,12 +1277,11 @@ sub bg_decrypt($$$$$$$) {
 sub bg_crypt($$$$$) {
     my ($msg, $n, $h, $t, $x) = @_;
     my $hmask = rmask($h);
-    my $shmask = $hmask;
     my $enc = 0;
-    for (my $i = 0; $i < $t; ++$i) {
+    my $sh = 0;
+    for (my $i = 0; $i < $t; ++$i, $sh += $h) {
         $x = mul_mod($x, $x, $n); # get keystream bits from BBS
-        $enc |= ($msg & $shmask) ^ lshift($x & $hmask, $i*$h);
-        $shmask = lshift($shmask, $h);
+        $enc |= ($msg & lshift($hmask, $sh)) ^ lshift($x & $hmask, $sh);
     }
     return ($enc, $x);
 }
@@ -1698,7 +1771,7 @@ sub random($$) {
     my ($min, $max) = @_;
     return $min if $min >= $max;
     my $m = $max - $min + 1;
-    my $bytes = int((number_bits($m) + $bits_per_byte-1) / $bits_per_byte);
+    my $bytes = number_bytes($m);
     my $rmax = idiv(lshift(1,8*$bytes), $m) * $m;
     for (;;) {
         my $rand = $rng->{get}($rng, $bytes);
@@ -1903,17 +1976,17 @@ sub twi_rng_get_bytes($$) {
 sub fort_rng_init($$) {
     my ($bits, $seed) = @_;
     my $num_pools = 32;
-    my $sha_size = 256;
+    my $sha_bits = 256;
     my @pool;
     my @pool_ptr;
     for (my $i = 0; $i < $num_pools; ++$i) {
-        push @pool, { digest => new Digest::SHA($sha_size), bytes => 0 }; 
+        push @pool, { digest => new Digest::SHA($sha_bits), bytes => 0 }; 
     }
     my $fort = { 'get' => \&fort_rng_get_bytes, 'set_seed' => \&fort_rng_seed,
-        'key' => '', 'ctr' => 1,'rekey_ctr' => 0, 'sha_size' => $sha_size,
+        'key' => '', 'ctr' => 1,'rekey_ctr' => 0, 'sha_bits' => $sha_bits,
         'key_size' => Crypt::Cipher::AES::keysize(), 
         'cblock_size' => Crypt::Cipher::AES::blocksize(), 
-        'hblock_size' => rshift($sha_size,3),
+        'hblock_size' => idiv($sha_bits, $bits_per_byte),
         'pool' => \@pool, 'pool_ptr' => \@pool_ptr };
     fort_rng_seed($fort, $seed);
     fort_rng_rekey($fort); # make sure we have a key
@@ -1973,7 +2046,7 @@ sub fort_rng_rekey {
     my ($fort) = @_;
     my $rekey_ctr = ++($fort->{rekey_ctr});
     print "fort: rekey $rekey_ctr\n" if $opt{verbose};
-    my $key_digest = new Digest::SHA($fort->{sha_size});
+    my $key_digest = new Digest::SHA($fort->{sha_bits});
     $key_digest->add($fort->{key}); # mix in existing key
     my $ti = 1;
     for (my $i = 0; $i < @{$fort->{pool}}; ++$i, $ti = lshift($ti,1)) {
@@ -1981,7 +2054,7 @@ sub fort_rng_rekey {
         next if idiv($rekey_ctr, $ti) * $ti != $rekey_ctr;
         print "fort: take pool $i\n" if $opt{verbose};
         $key_digest->add(${$fort->{pool}}[$i]->{digest}->digest());
-        ${$fort->{pool}}[$i]->{digest}->reset($fort->{sha_size});
+        ${$fort->{pool}}[$i]->{digest}->reset($fort->{sha_bits});
         ${$fort->{pool}}[$i]->{bytes} = 0;
     }
     fort_rng_setkey($fort, $key_digest->digest());
@@ -2215,6 +2288,12 @@ sub number_bits {
         ++$bits;
     }
     return $bits;
+}
+
+# -----------------------------------------------------------------
+sub number_bytes {
+    my ($num) = @_;
+    return idiv(number_bits($num)+$bits_per_byte-1, $bits_per_byte);
 }
 
 # -----------------------------------------------------------------
