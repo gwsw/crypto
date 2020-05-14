@@ -353,7 +353,7 @@ sub cmd_ccn {
         print "INVALID DIGIT\n";
         return 0;
     } elsif ($gen) {
-        print "$ccn$ch\n";
+        print $ccn, chr(ord('0')+$ch), "\n";
     } elsif ($ch == 0) {
         print "ok\n";
     } else {
