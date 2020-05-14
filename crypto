@@ -100,6 +100,8 @@ my %all_commands = (
     'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
     'sol-decrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol-encrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
+    'sol4-decrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
+    'sol4-encrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
     'ss-decrypt'      => [ \&cmd_ss_decrypt,      "[N PQ D] MSG" ],
     'ss-encrypt'      => [ \&cmd_ss_encrypt,      "[N] MSG" ],
     'ss-gen'          => [ \&cmd_ss_gen,          "BITS" ],
@@ -835,16 +837,34 @@ sub cmd_schnorr_verify {
 # -----------------------------------------------------------------
 sub cmd_sol_crypt {
     my ($cmd, $deck, $msg, $msg2) = @_;
+    return cmd_solx_crypt(0, $cmd, $deck, $msg, $msg2);
+}
+
+# -----------------------------------------------------------------
+sub cmd_sol4_crypt {
+    my ($cmd, $deck, $msg, $msg2) = @_;
+    return cmd_solx_crypt(4, $cmd, $deck, $msg, $msg2);
+}
+
+# -----------------------------------------------------------------
+sub cmd_solx_crypt {
+    my ($vers, $cmd, $deck, $msg, $msg2) = @_;
+    my $encrypt = (substr($cmd, -7) eq "encrypt");
     if ($deck eq '-k') {
-        $deck = sol_deck_from_key($msg);
+        $deck = solx_deck_from_key($vers, $msg);
+        return cmd_fail($cmd) if not $deck;
         $msg = $msg2;
     } else {
         my @deck = split /[\s,]/, $deck;
         $deck = \@deck;
     }
     return usage($cmd) if not defined $msg or scalar(@$deck) != 54;
-    # Should check that deck is a permutation of 1..54
-    my $crypt = sol_crypt(($cmd eq 'sol-encrypt'), $deck, $msg);
+    # Check that deck is a permutation of 1..54.
+    my @cdeck = sort { $a <=> $b } @$deck;
+    for (my $i = 0; $i < @cdeck; ++$i) {
+        return usage($cmd) if $cdeck[$i] != $i+1;
+    }
+    my $crypt = solx_crypt($vers, $encrypt, $deck, $msg);
     return cmd_fail($cmd) if not defined $crypt;
     print "$crypt\n";
     return 1;
@@ -1286,6 +1306,7 @@ sub bg_crypt($$$$$) {
     return ($enc, $x);
 }
 
+
 # -----------------------------------------------------------------
 # ---- Cramer-Shoup
 # -----------------------------------------------------------------
@@ -1372,16 +1393,20 @@ sub ou_decrypt($$$$$$) {
 # -----------------------------------------------------------------
 
 # -----------------------------------------------------------------
-sub sol_crypt($$$) {
-    my ($encrypt, $deck, $msg) = @_;
+sub solx_crypt($$$$) {
+    my ($vers, $encrypt, $deck, $msg) = @_;
     my $res = '';
     sol_print_deck($deck) if $opt{verbose};
     for (my $i = 0; $i < length $msg; ++$i) {
-        my $cval = sol_char_value(substr($msg, $i, 1));
-        next if $cval < 1 or $cval > 26;
+        my $ch = substr($msg, $i, 1);
+        my $cval = sol_char_value($ch);
+        if ($cval < 1 or $cval > 26) {
+            $res .= $ch;
+            next;
+        }
         my $k = 0;
         while (not $k) {
-            $k = sol_keystream($deck);
+            $k = solx_keystream($vers, $deck);
             sol_print_deck($deck) if $opt{verbose};
         }
         print "keystream $k\n" if $opt{verbose};
@@ -1394,15 +1419,35 @@ sub sol_crypt($$$) {
 }
 
 # -----------------------------------------------------------------
+sub solx_deck_from_key($$) {
+    my ($vers, $key) = @_;
+    $key =~ s/[^a-z]//ig;
+    if (not $key) {
+        print "invalid key; must be alphabetic\n";
+        return undef;
+    }
+    return sol_deck_from_key($key) if $vers == 0;
+    return sol4_deck_from_key($key) if $vers == 4;
+    die;
+}
+
+# -----------------------------------------------------------------
+sub solx_keystream($$;$) {
+    my ($vers, $deck, $keygen) = @_;
+    return sol_keystream($deck, $keygen) if $vers == 0;
+    return sol4_keystream($deck, $keygen) if $vers == 4;
+    die;
+}
+
+# -----------------------------------------------------------------
 # Schneier's "method 3" which derives a deck order from an alphabetic key.
 sub sol_deck_from_key($) {
     my ($key) = @_;
-    $key =~ s/[^a-z]//ig;
-    my @deck = ( 1 .. $suit_cards+$jokers ); # start with deck in standard order
+    my @deck = ( 1 .. sol_cards() ); # start with deck in standard order
     for (my $i = 0; $i < length $key; ++$i) {
         my $ch = sol_char_value(substr($key, $i, 1));
         next if $ch < 1 or $ch > 26;
-        sol_keystream(\@deck, $ch);
+        sol_keystream(0, \@deck, $ch);
     }
     return \@deck;
 }
@@ -1426,17 +1471,75 @@ sub sol_keystream($;$) {
 }
 
 # -----------------------------------------------------------------
+# sol4 modeled on rc4.
+# As in Solitaire, each card has a value between 1 and 54.
+# To obtain one character of the keystream:
+#  1. Move the A joker down one card (that is, swap it with the card below it).
+#     If it ends up on the bottom of the deck, move it to the top of the deck.
+#  2. Designate the card immediately below the A joker as the "A follower" card.
+#     If that card is the B joker, designate the card below it instead (wrapping).
+#  3. Move the B joker down N cards, where N is the value of the A follower.
+#     If the B joker ends up on the bottom of the deck at any step,
+#     move it to the top of the deck.
+#  4. Designate the card immediately below the B joker as the "B follower" card.
+#     If that card is the A joker, designate the card below it instead (wrapping).
+#  5. Swap the A follower card with the B follower card.
+#  6. Let C be the value of the A follower card plus the value of 
+#     the B follower card, modulo 54.
+#  7. Let K be the value of the C-th card in the deck, where C=0 means the top card,
+#     C=1 means the second card from the top, etc. K is the next keystream value.
+#
+sub sol4_keystream($;$) {
+    my ($deck, $keygen) = @_;
+    return 0 if $keygen and ($keygen < 1 or $keygen > 26);
+    my $i = sol_joker_ptr($deck, sol_move($deck, $jokerA, +1));
+    my $ni = $$deck[$i];
+    my $j = sol_joker_ptr($deck, sol_move($deck, $jokerB, $ni));
+    my $nj = $$deck[$j];
+    ($$deck[$i], $$deck[$j]) = ($$deck[$j], $$deck[$i]);
+    return $$deck[sol_joker_ptr($deck, ($ni+$nj) % @$deck)];
+}
+
+# -----------------------------------------------------------------
+# Modeled on rc4 key expansion.
+sub sol4_deck_from_key($) {
+    my ($key) = @_;
+    my $klen = length $key;
+    my @deck = ( 1 .. sol_cards() ); # start with deck in standard order
+    my $kx = $klen-1;
+    my $dx = 0;
+    for (my $i = 0; $i < @deck; ++$i) {
+        my $ch = sol_char_value(substr($key,$kx,1));
+        if (--$kx < 0) { $kx = $klen-1; }
+        next if $ch < 1 or $ch > 26;
+        $dx = ($dx + $deck[$i] + $ch) % @deck;
+        ($deck[$i], $deck[$dx]) = ($deck[$dx], $deck[$i]);
+    }
+    return \@deck;
+}
+
+# -----------------------------------------------------------------
 # Move a card a fixed number of positions forward in the deck.
 sub sol_move($$$) {
     my ($deck, $card, $moves) = @_;
     my $index = first_index { $_ == $card } @$deck;
     die if $index < 0; # card not in deck?
+    return sol_movex($deck, $index, $moves);
+}
+
+# -----------------------------------------------------------------
+sub sol_movex($$$) {
+    my ($deck, $index, $moves) = @_;
+    my $new_index;
     if ($index + $moves >= sol_cards()) { # wrap to start of deck
         my @card = splice $deck, $index, 1;
-        splice $deck, $index + $moves - sol_cards() + 1, 0, @card;
+        $new_index = $index + $moves - sol_cards() + 1;
+        splice $deck, $new_index, 0, @card;
     } else {
+        $new_index = $index + $moves;
         splice $deck, $index, $moves+1, @$deck[$index+1 .. $index+$moves], $$deck[$index];
     }
+    return $new_index;
 }
 
 # -----------------------------------------------------------------
@@ -1455,6 +1558,16 @@ sub sol_count_cut($$) {
     my ($deck, $count) = @_;
     my @cards = splice $deck, 0, min($count, sol_cards()-1);
     splice $deck, -1, 0, @cards;
+}
+
+# -----------------------------------------------------------------
+sub sol_joker_ptr($$) {
+    my ($deck, $i) = @_;
+    for (;;) {
+        my $c = $$deck[$i];
+        return $i if $c != $jokerA and $c != $jokerB;
+        if (++$i >= @$deck) { $i = 0; }
+    }
 }
 
 # -----------------------------------------------------------------
@@ -1478,11 +1591,17 @@ sub sol_cards() {
 sub sol_print_deck($) {
     my ($deck) = @_;
     my $print_cards = $opt{cards};
+    my $col = 0;
     for (my $i = 0; $i < @$deck; ++$i) {
         my $card = $$deck[$i];
         $card = sol_playing_card($card) if $print_cards;
-        print $card, ' ';
-        print "\n" if $print_cards and $i == (sol_cards() / 2) - 1;
+        $card .= ' ';
+        if ($col + length($card) >= $opt{width}) {
+            print "\n";
+            $col = 0;
+        }
+        print $card;
+        $col += length($card);
     }
     print "\n";
 }
@@ -1491,11 +1610,18 @@ sub sol_print_deck($) {
 sub sol_playing_card($) {
     my ($n) = @_;
     die if $n > sol_cards();
+#   my @playing_card = qw( ZZ
+#       Ac 2c 3c 4c 5c 6c 7c 8c 9c Tc Jc Qc Kc
+#       Ad 2d 3d 4d 5d 6d 7d 8d 9d Td Jd Qd Kd
+#       Ah 2h 3h 4h 5h 6h 7h 8h 9h Th Jh Qh Kh
+#       As 2s 3s 4s 5s 6s 7s 8s 9s Ts Js Qs Ks
+#       =A =B
+#   );
     my @playing_card = qw( ZZ
-        Ac 2c 3c 4c 5c 6c 7c 8c 9c Tc Jc Qc Kc
-        Ad 2d 3d 4d 5d 6d 7d 8d 9d Td Jd Qd Kd
-        Ah 2h 3h 4h 5h 6h 7h 8h 9h Th Jh Qh Kh
-        As 2s 3s 4s 5s 6s 7s 8s 9s Ts Js Qs Ks
+        A* 2* 3* 4* 5* 6* 7* 8* 9* T* J* Q* K*
+        A# 2# 3# 4# 5# 6# 7# 8# 9# T# J# Q# K#
+        A@ 2@ 3@ 4@ 5@ 6@ 7@ 8@ 9@ T@ J@ Q@ K@
+        A& 2& 3& 4& 5& 6& 7& 8& 9& T& J& Q& K&
         =A =B
     );
     return $playing_card[$n];
