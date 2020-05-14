@@ -1653,10 +1653,10 @@ sub dh_key_exchange($) {
 # Standard (Luhn) credit card check digit.
 sub luhn($;$) {
     my ($ccn, $gen) = @_;
-    my $total = 0;
     $ccn .= '0' if $gen;
+    my $total = 0;
     for (my $i = 0; $i < length($ccn); ++$i) {
-        my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
+        my $digit = ccn_digit($ccn, -$i-1);
         return undef if $digit < 0 or $digit >= 10;
         $digit *= 2 if $i & 1;
         $digit -= 9 if $digit > 9;
@@ -1698,13 +1698,20 @@ sub verhoeff($;$) {
     $ccn .= '0' if $gen;
     my $total = 0;
     for (my $i = 0; $i < length($ccn); ++$i) {
-        my $digit = ord(substr($ccn, length($ccn)-$i-1, 1)) - ord('0');
+        my $digit = ccn_digit($ccn, -$i-1);
         return undef if $digit < 0 or $digit > 9;
         my $p = ${$p[$i % 8]}[$digit];
         $total = ${$d[$total]}[$p];
     }
     $total = $inv[$total] if $gen;
     return $total;
+}
+
+# -----------------------------------------------------------------
+sub ccn_digit($$) {
+    my ($ccn, $i) = @_;
+    $i = length($ccn)+$i if $i < 0;
+    return ord(substr($ccn, $i, 1)) - ord('0');
 }
 
 # -----------------------------------------------------------------
