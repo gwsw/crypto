@@ -53,6 +53,8 @@ my %all_commands = (
     'bg-decrypt'      => [ \&cmd_bg_decrypt,      "{P Q N} H T X C" ],
     'bg-encrypt'      => [ \&cmd_bg_encrypt,      "{N} MSG" ],
     'bg-gen'          => [ \&cmd_bg_gen,          "BITS QBITS" ],
+    'caesar-decrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING" ],
+    'caesar-encrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING" ],
     'cs-decrypt'      => [ \&cmd_cs_decrypt,      "[P Q QBITS G1 G2 C D H] MSG" ],
     'cs-encrypt'      => [ \&cmd_cs_encrypt,      "[P X1 X2 Y1 Y2 Z] U1 U2 E V" ],
     'cs-gen'          => [ \&cmd_cs_gen,          "BITS" ],
@@ -339,6 +341,17 @@ sub cmd_bg_decrypt {
     my $dec = bg_decrypt($p, $q, $n, $h, $t, $xt, $c);
     return cmd_fail('decrypt') if not defined $dec;
     print number($dec), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_caesar_crypt {
+    my ($cmd, $shift, $str) = @_;
+    return usage($cmd) if not defined $str;
+    $shift = -$shift if $cmd !~ /encrypt/;
+    $str = caesar_crypt($shift, $str);
+    return cmd_fail($cmd) if not defined $str;
+    print $str, "\n";
     return 1;
 }
 
@@ -1313,6 +1326,18 @@ sub bg_crypt($$$$$) {
     return ($enc, $x);
 }
 
+# -----------------------------------------------------------------
+sub caesar_crypt($$) {
+    my ($shift, $str) = @_;
+    my $rstr = '';
+    foreach my $ch (split '', $str) {
+        my $ich = ord(uc $ch);
+        $ich = ((($ich - ord('A') + $shift) + 26) % 26) + ord('A')
+            if $ich >= ord('A') and $ich <= ord('Z');
+        $rstr .= chr $ich;
+    }
+    return $rstr;
+}
 
 # -----------------------------------------------------------------
 # ---- Cramer-Shoup
