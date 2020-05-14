@@ -1734,8 +1734,8 @@ sub insertb_sort(@) {
     for (;;) {
         my $item = shift @_;
         last if not defined $item;
-        my ($lo,$hi) = (0,0);
-        for (($lo,$hi) = (0, scalar @sorted); $lo < $hi;) {
+        my ($lo,$hi) = (0, scalar @sorted);
+        while ($lo < $hi) {
             my $mid = rshift($lo + $hi, 1);
             if ($sorted[$mid] < $item) {
                 $lo = $mid + 1;
@@ -1752,7 +1752,7 @@ sub insertb_sort(@) {
 sub merge_sort(@) {
     my $len = scalar @_;
     return @_ if $len < 2;
-    $len = int($len/2);
+    $len = rshift($len, 1);
     my @sub1 = merge_sort(splice(@_, 0, $len));
     my @sub2 = merge_sort(@_);
     my @sorted;
@@ -1797,7 +1797,7 @@ sub quick_sort_range($$$) {
         last if $plo >= $phi;
         ($$arr[$plo], $$arr[$phi]) = ($$arr[$phi], $$arr[$plo]);
     }
-die unless $phi < $hi; # qs-pivot=hi trips this
+    die if $phi >= $hi;
     quick_sort_range($arr, $lo, $phi, $pivot_type);
     quick_sort_range($arr, $phi+1, $hi, $pivot_type);
 }
