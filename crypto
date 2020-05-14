@@ -1156,7 +1156,7 @@ sub rabin_msg($$$) {
 # -----------------------------------------------------------------
 sub rc4_crypt {
     my ($k, $msg, $mlen) = @_;
-    my $rc = rc4_gen($k);
+    my $rc = rc4_keyexpand($k);
     my $i = $rc->{i};
     my $j = $rc->{j};
     my $s = $rc->{s};
@@ -1166,6 +1166,7 @@ sub rc4_crypt {
         $j = ($j + $$s[$i]) & $ff;
         ($$s[$i], $$s[$j]) = ($$s[$j], $$s[$i]);
         my $keybyte = $$s[($$s[$i] + $$s[$j]) & $ff];
+        printf "key %02x\n", $keybyte if $opt{verbose};
         $msg ^= $keybyte << ($mlen * $bits_per_byte);
     }
     $rc->{i} = $i;
@@ -1174,7 +1175,7 @@ sub rc4_crypt {
 }
 
 # -----------------------------------------------------------------
-sub rc4_gen($) {
+sub rc4_keyexpand($) {
     my ($k) = @_;
     my $klen = number_bytes($k);
     my $ff = rmask($bits_per_byte);
