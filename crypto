@@ -10,6 +10,7 @@ use Crypt::Cipher::AES;
 use Time::HiRes      qw( time );
 use List::Util       qw( min max );
 use List::MoreUtils  qw( first_index );
+use Term::ReadKey    qw( GetTerminalSize );
 
 # Constants
 my $bits_per_byte       = 8;
@@ -44,6 +45,7 @@ my %all_options = (
     'rsa-orig'    => [ 'b', "Use phi rather than lambda in calculating decryption exponent." ],
     'rsa-randexp' => [ 'b', "Use random encrytion exponent rather than 65537." ],
     'seed'        => [ 's', "Seed string for RNG. \"NUM\@FILE\" to read NUM bytes from FILE.", \&opt_seed ],
+    'width'       => [ 'i', "Terminal width (0=infinite)" ],
     'verbose'     => [ 'b', "Print debugging info." ],
 );
 
@@ -190,6 +192,10 @@ sub main {
     $opt{rng} = 'std' if not $opt{rng};
     $opt{seed} = time() if not $opt{seed};
     $opt{'qs-pivot'} = $pivot_alias{$opt{'qs-pivot'} or $qs_pivot_default};
+    if (not $opt{width}) {
+        my ($w) = GetTerminalSize();
+        $opt{width} = $w;
+    }
     return usage() if not $opt{'qs-pivot'};
     return usage() if not set_rng($opt{rng}, $opt{seed});
 
@@ -284,7 +290,7 @@ sub command(@) {
             $ret = &$handler(@args); # run the cmd
             last if not $ret and $quit_on_error;
         }
-        printf "=%.6f sec\n", time()-$start_time if $opt{perf};
+        printf STDERR "=%.6f sec\n", time()-$start_time if $opt{perf};
         last if not $ret and $quit_on_error;
     }
     return $ret;
