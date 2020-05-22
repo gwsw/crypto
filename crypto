@@ -123,6 +123,8 @@ my $jokerB       = $jokerA+1;
 my $rng; # the active RNG, returned from *_rng_init
 my %opt; # currently set options
 my %saved;
+my $if_nest = 0;
+my $if_skipping = 0;
 
 
 # -----------------------------------------------------------------
@@ -213,7 +215,8 @@ sub main {
     }
     my $ok = 1;
     for (;;) {
-        my $prompt = $opt{'no-prompt'} ? '' : '>';
+        my $prompt = $opt{'no-prompt'} ? '' : $if_skipping ? '?' : '>';
+        $prompt = "$if_nest($if_skipping) $prompt" if $saved{show_if} and $if_nest > 0;
         my $line;
         if ($term) {
             $line = $term->readline($prompt);
@@ -222,37 +225,57 @@ sub main {
             $line = <>;
         }
         last if not defined $line;
-        $line =~ s/^\s+//; # rm leading space
-        $line =~ s/\s+$//; # rm trailing space, \r, \n
-        next if $line eq ''; # ignore empty line
-        next if $line =~ /^#/; # ignore comment
-        last if $line eq 'q' or $line eq 'quit' or $line eq 'exit';
-        # Split line on spaces and quotes, then rejoin any quoted parts.
-        my @args;
-        my $quoting = 0;
-        my $word = '';
-        foreach my $arg (split /(\s+|")/, $line.' ') {
-            if ($arg eq '"') {
-                $quoting = not $quoting;
-            } elsif ($quoting or $arg !~ /^\s*$/) {
-                $word .= $arg;
-            } elsif ($arg =~ /\s+/) { # unquoted space = end of word
-                push @args, $word;
-                $word = '';
-            }
-        }
-        if (not command(@args)) {
-            print "*** command failed\n" unless $opt{'no-prompt'};
-            $ok = 0;
-        }
+        last if $line =~ /^\s*(q|quit|exit)\s*$/;
+        $ok = 0 if not cmd_line($line);
     }
     return $ok;
+}
+
+# -----------------------------------------------------------------
+sub cmd_line {
+    my ($line) = @_;
+    $line =~ s/^\s+//; # rm leading space
+    $line =~ s/\s+$//; # rm trailing space, \r, \n
+    return 1 if $line eq ''; # ignore empty line
+    return 1 if $line =~ /^#/; # ignore comment
+    # Split line on spaces and quotes, then rejoin any quoted parts.
+    my @args;
+    my $quoting = 0;
+    my $word = '';
+    foreach my $arg (split /(\s+|")/, $line.' ') {
+        if ($arg eq '"') {
+            $quoting = not $quoting;
+        } elsif ($quoting or $arg !~ /^\s*$/) {
+            $word .= $arg;
+        } elsif ($arg =~ /\s+/) { # unquoted space = end of word
+            push @args, $word;
+            $word = '';
+        }
+    }
+    if (not command(@args)) {
+        print "*** command failed\n" unless $opt{'no-prompt'};
+        return 0;
+    }
+    return 1;
 }
 
 # -----------------------------------------------------------------
 sub command(@) {
     my $ret = 1;
     while (@_) {
+        if ($_[0] =~ /^\@(.*)/) {
+            shift @_;
+            my $cmd_file;
+            if (not open($cmd_file, $1)) {
+                print "cannot open $cmd_file: $!\n";
+                return 0;
+            }
+            while (<$cmd_file>) {
+                cmd_line($_);
+            }
+            close $cmd_file;
+            next;
+        }
         # See if there is a termchar (';' or '&').
         my $end = first_index { $_ eq ';' or $_ eq '&' } @_;
         $end = scalar(@_) if $end < 0;
@@ -276,24 +299,47 @@ sub command(@) {
             $saved{$1} = $val;
             last;
         }
-        my $command = $all_commands{$cmd};
-        if (not $command) {
-            print "invalid command \"$cmd\"; use \"help\" for help\n";
-            last;
-        }
         my $quit_on_error = 0;
         if ($termchar) {
             die if $termchar ne shift(@_); # discard termchar
             $quit_on_error = 1 if $termchar eq '&';
         }
-        my ($handler) = @$command;
-        my $start_time = time();
-        while ($repeat-- > 0) {
-            $ret = &$handler(@args); # run the cmd
+        if ($cmd eq 'if') {
+            ++$if_nest;
+            if (not $if_skipping) {
+                $if_skipping = $if_nest if not eval($args[1]);
+            }
+        } elsif ($cmd eq 'else') {
+            if ($if_nest == 0) {
+                print "invalid 'else': does not follow 'if'\n";
+            } elsif ($if_skipping == $if_nest) {
+                $if_skipping = 0;
+            } elsif ($if_skipping == 0) {
+                $if_skipping = $if_nest;
+            }
+        } elsif ($cmd eq 'endif') {
+            if ($if_nest == 0) {
+                print "invalid 'endif': does not follow 'if'\n";
+            } else {
+                $if_skipping = 0 if $if_nest == $if_skipping;
+                --$if_nest;
+            }
+        } else {
+            my $command = $all_commands{$cmd};
+            if (not $command) {
+                print "invalid command \"$cmd\"; use \"help\" for help\n";
+                last;
+            }
+            next if $if_skipping;
+            my ($handler) = @$command;
+            my $start_time = time();
+            while ($repeat-- > 0) {
+                $ret = &$handler(@args); # run the cmd
+                last if not $ret and $quit_on_error;
+            }
+            printf STDERR "=%.6f sec\n", time()-$start_time if $opt{perf};
             last if not $ret and $quit_on_error;
         }
-        printf STDERR "=%.6f sec\n", time()-$start_time if $opt{perf};
-        last if not $ret and $quit_on_error;
     }
     return $ret;
 }
@@ -311,7 +357,6 @@ sub cmd_help {
     usage($help_cmd);
     return 1;
 }
-
 
 # -----------------------------------------------------------------
 sub cmd_bg_gen {
