@@ -69,6 +69,7 @@ my %all_commands = (
     'find-pq-prime'   => [ \&cmd_find_pq_prime,   "BITS QBITS" ],
     'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2" ],
     'help'            => [ \&cmd_help,            "[command]" ],
+    'history'         => [ \&cmd_history,         "[NUM]" ],
     'inv'             => [ \&cmd_inv,             "NUM MOD" ],
     'is-prime'        => [ \&cmd_is_prime,        "NUM" ],
     'isort'           => [ \&cmd_sort,            "NUM..." ],
@@ -122,6 +123,7 @@ my $jokerB       = $jokerA+1;
 # Global variables.
 my $rng; # the active RNG, returned from *_rng_init
 my %opt; # currently set options
+my @cmd_hist;
 my %saved;
 my $if_nest = 0;
 my $if_skipping = 0;
@@ -206,7 +208,7 @@ sub main {
     # Change 'crypto help' to 'crypto help shell'.
     if (@ARGV == 1 and $ARGV[0] eq 'help') { push @ARGV, 'shell'; }
 
-    return command(@ARGV) if @ARGV; # crypto command is on cmd line
+    return command(1, @ARGV) if @ARGV; # crypto command is on cmd line
 
     # Interactive mode.
     my $term;
@@ -216,7 +218,7 @@ sub main {
     my $ok = 1;
     for (;;) {
         my $prompt = $opt{'no-prompt'} ? '' : $if_skipping ? '?' : '>';
-        $prompt = "$if_nest($if_skipping) $prompt" if $saved{show_if} and $if_nest > 0;
+        ###$prompt = "$if_nest($if_skipping) $prompt" if $saved{show_if} and $if_nest > 0;
         my $line;
         if ($term) {
             $line = $term->readline($prompt);
@@ -252,7 +254,7 @@ sub cmd_line {
             $word = '';
         }
     }
-    if (not command(@args)) {
+    if (not command(1, @args)) {
         print "*** command failed\n" unless $opt{'no-prompt'};
         return 0;
     }
@@ -262,6 +264,7 @@ sub cmd_line {
 # -----------------------------------------------------------------
 sub command(@) {
     my $ret = 1;
+    my $save_hist = shift @_;
     while (@_) {
         if ($_[0] =~ /^\@(.*)/) {
             shift @_;
@@ -281,6 +284,7 @@ sub command(@) {
         $end = scalar(@_) if $end < 0;
         my $termchar = ($end < @_) ? $_[$end] : '';
         my @args = splice @_, 0, $end; # remove args from @_
+        push @cmd_hist, \@args if $save_hist;
         # Expand $VARs in args.
         for (my $i = 0; $i < @args; ++$i) {
             my $arg = $args[$i];
@@ -321,7 +325,7 @@ sub command(@) {
             if ($if_nest == 0) {
                 print "invalid 'endif': does not follow 'if'\n";
             } else {
-                $if_skipping = 0 if $if_nest == $if_skipping;
+                $if_skipping = 0 if $if_skipping == $if_nest;
                 --$if_nest;
             }
         } else {
@@ -355,6 +359,15 @@ sub cmd_fail($) {
 sub cmd_help {
     my ($cmd, $help_cmd) = @_;
     usage($help_cmd);
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_history {
+    my ($cmd, $num) = @_;
+    for (my $i = $num ? @cmd_hist - $num : 0; $i < @cmd_hist; ++$i) {
+        print "$i. ", join(' ', @{$cmd_hist[$i]}), "\n";
+    }
     return 1;
 }
 
