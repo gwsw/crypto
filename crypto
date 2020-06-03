@@ -95,6 +95,7 @@ my %all_commands = (
     'rc4-encrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
     'rc4-decrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
     'rc4-key'         => [ \&cmd_rc4_key,         "KEY BYTES" ],
+    'read'            => [ \&cmd_read,            "VAR" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
     'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
     'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
@@ -125,8 +126,11 @@ my $rng; # the active RNG, returned from *_rng_init
 my %opt; # currently set options
 my @cmd_hist;
 my %saved;
+my $the_pc = -1;
 my $if_nest = 0;
 my $if_skipping = 0;
+my @while_stack;
+my @at_files;
 
 
 # -----------------------------------------------------------------
@@ -208,7 +212,7 @@ sub main {
     # Change 'crypto help' to 'crypto help shell'.
     if (@ARGV == 1 and $ARGV[0] eq 'help') { push @ARGV, 'shell'; }
 
-    return command(1, @ARGV) if @ARGV; # crypto command is on cmd line
+    return command(@ARGV) if @ARGV; # crypto command is on cmd line
 
     # Interactive mode.
     my $term;
@@ -220,13 +224,24 @@ sub main {
         my $prompt = $opt{'no-prompt'} ? '' : $if_skipping ? '?' : '>';
         ###$prompt = "$if_nest($if_skipping) $prompt" if $saved{show_if} and $if_nest > 0;
         my $line;
-        if ($term) {
-            $line = $term->readline($prompt);
-        } else {
-            print $prompt;
-            $line = <>;
+        if ($the_pc < 0) {
+            if (@at_files) {
+                my $file = $at_files[$#at_files];
+                $line = <$file>;
+                if (not defined $line) {
+                    pop @at_files;
+                    next;
+                }
+            } else {
+                if ($term) {
+                    $line = $term->readline($prompt);
+                } else {
+                    print $prompt;
+                    $line = <>;
+                }
+                last if not defined $line;
+            }
         }
-        last if not defined $line;
         last if $line =~ /^\s*(q|quit|exit)\s*$/;
         $ok = 0 if not cmd_line($line);
     }
@@ -234,27 +249,30 @@ sub main {
 }
 
 # -----------------------------------------------------------------
+# Split cmd line into args. Handle whitespace and quotes.
 sub cmd_line {
     my ($line) = @_;
-    $line =~ s/^\s+//; # rm leading space
-    $line =~ s/\s+$//; # rm trailing space, \r, \n
-    return 1 if $line eq ''; # ignore empty line
-    return 1 if $line =~ /^#/; # ignore comment
-    # Split line on spaces and quotes, then rejoin any quoted parts.
     my @args;
-    my $quoting = 0;
-    my $word = '';
-    foreach my $arg (split /(\s+|")/, $line.' ') {
-        if ($arg eq '"') {
-            $quoting = not $quoting;
-        } elsif ($quoting or $arg !~ /^\s*$/) {
-            $word .= $arg;
-        } elsif ($arg =~ /\s+/) { # unquoted space = end of word
-            push @args, $word;
-            $word = '';
+    if (defined $line) {
+        $line =~ s/^\s+//; # rm leading space
+        $line =~ s/\s+$//; # rm trailing space, \r, \n
+        return 1 if $line eq ''; # ignore empty line
+        return 1 if $line =~ /^#/; # ignore comment
+        # Split line on spaces and quotes, then rejoin any quoted parts.
+        my $quoting = 0;
+        my $word = '';
+        foreach my $arg (split /(\s+|")/, $line.' ') {
+            if ($arg eq '"') {
+                $quoting = not $quoting;
+            } elsif ($quoting or $arg !~ /^\s*$/) {
+                $word .= $arg;
+            } elsif ($arg =~ /\s+/) { # unquoted space = end of word
+                push @args, $word;
+                $word = '';
+            }
         }
     }
-    if (not command(1, @args)) {
+    if (not command(@args)) {
         print "*** command failed\n" unless $opt{'no-prompt'};
         return 0;
     }
@@ -262,56 +280,63 @@ sub cmd_line {
 }
 
 # -----------------------------------------------------------------
+# Process one or more commands, separated by ; or &.
 sub command(@) {
     my $ret = 1;
-    my $save_hist = shift @_;
+    my $cmd_pc = @cmd_hist;
+    my $new_cmd = 1;
+    if ($the_pc >= 0) {
+        $cmd_pc = $the_pc;
+        @_ = @{$cmd_hist[$the_pc]};
+        $the_pc = -1 if ++$the_pc >= @cmd_hist;
+        $new_cmd = 0;
+    }
     while (@_) {
-        if ($_[0] =~ /^\@(.*)/) {
-            shift @_;
-            my $cmd_file;
-            if (not open($cmd_file, $1)) {
-                print "cannot open $cmd_file: $!\n";
-                return 0;
-            }
-            while (<$cmd_file>) {
-                cmd_line($_);
-            }
-            close $cmd_file;
-            next;
-        }
         # See if there is a termchar (';' or '&').
         my $end = first_index { $_ eq ';' or $_ eq '&' } @_;
         $end = scalar(@_) if $end < 0;
         my $termchar = ($end < @_) ? $_[$end] : '';
-        my @args = splice @_, 0, $end; # remove args from @_
-        push @cmd_hist, \@args if $save_hist;
+        my @sargs = splice @_, 0, $end; # remove args from @_
+        push @cmd_hist, \@sargs if $new_cmd;
         # Expand $VARs in args.
-        for (my $i = 0; $i < @args; ++$i) {
-            my $arg = $args[$i];
+        my @args;
+        for (my $i = 0; $i < @sargs; ++$i) {
+            my $arg = $sargs[$i];
             while ($arg =~ /^([^\$]*) \$ ([({]?) (\w+) ([)}]?) (.*)$/x) {
                 my $v = $saved{$3};
                 $v = '?' if not defined $v;
                 $arg = $1 . $v . $5;
             }
-            $args[$i] = $arg;
+            push @args, $arg;
         }
         my $repeat = 1;
         if ($args[0] =~ /^(\d+)\*$/) { $repeat = $1; shift @args; }
         my $cmd = $args[0];
-        if ($cmd =~ /^(\w+) (:?)= (.*)$/x) {
-            my $val = ($2 eq ':') ? eval($3) : $3;
-            $saved{$1} = $val;
-            last;
-        }
         my $quit_on_error = 0;
         if ($termchar) {
             die if $termchar ne shift(@_); # discard termchar
             $quit_on_error = 1 if $termchar eq '&';
         }
-        if ($cmd eq 'if') {
+        if ($cmd =~ /^(\w+) (:?)= (.*)$/x) {
+            my $val = ($2 eq ':') ? eval($3) : $3;
+            $saved{$1} = $val;
+            next;
+        }
+        if ($cmd =~ /^\@(.*)/) {
+            my $cmd_file;
+            if (not open($cmd_file, $1)) {
+                print "cannot open $1: $!\n";
+                $ret = 0;
+            } else {
+                push @at_files, $cmd_file;
+            }
+            last;
+        }
+        if ($cmd eq 'if' or $cmd eq 'while') {
             ++$if_nest;
+            push @while_stack, ($cmd eq 'while' ? $cmd_pc : -1);
             if (not $if_skipping) {
-                $if_skipping = $if_nest if not eval($args[1]);
+                $if_skipping = $if_nest if not eval(join(' ',@args[1..$#args]));
             }
         } elsif ($cmd eq 'else') {
             if ($if_nest == 0) {
@@ -321,10 +346,14 @@ sub command(@) {
             } elsif ($if_skipping == 0) {
                 $if_skipping = $if_nest;
             }
-        } elsif ($cmd eq 'endif') {
+        } elsif ($cmd eq 'end' or $cmd eq 'endif' or $cmd eq 'endwhile') {
             if ($if_nest == 0) {
-                print "invalid 'endif': does not follow 'if'\n";
+                print "invalid '$cmd': does not follow 'if/while'\n";
             } else {
+                my $pc = pop @while_stack;
+                if (not $if_skipping and $pc >= 0) {
+                    $the_pc = $pc;
+                }
                 $if_skipping = 0 if $if_skipping == $if_nest;
                 --$if_nest;
             }
@@ -839,6 +868,17 @@ sub cmd_rc4_key {
     return usage($cmd) if not defined $bytes;
     my $num = rc4_crypt($k, 0, $bytes);
     print number($num), "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_read {
+    my ($cmd, $var) = @_;
+    return usage($cmd) if not defined $var;
+    print "$var=";
+    my $value = <>;
+    chomp $value;
+    $saved{$var} = $value;
     return 1;
 }
 
