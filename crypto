@@ -38,6 +38,7 @@ my %all_options = (
     'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
     'no-prompt'   => [ 'b', "Don't print prompts." ],
     'perf'        => [ 'b', "Print performance stats." ],
+    'quiet'       => [ 'b', "" ],
     'qs-pivot'    => [ 's', "QuickSort pivot (".join(',',sort keys %pivot_alias).")." ],
     'rabin-raw'   => [ 'b', "Don't pad message; decryption prints all 4 candidates." ],
     'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
@@ -104,6 +105,7 @@ my %all_commands = (
     'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG" ],
     'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG" ],
     'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
+    'sleep'           => [ \&cmd_sleep,           "NUM ms" ],
     'sol-decrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol-encrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol4-decrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
@@ -190,6 +192,8 @@ sub usage_options {
 # -----------------------------------------------------------------
 exit (main() ? 0 : 1);
 sub main {
+    $| = 1;
+    $SIG{INT} = \&sig_int;
     my @alist; # list of all option names for GetOptions
     while (my ($var,$option) = each %all_options) {
         my ($type) = @$option;
@@ -282,6 +286,19 @@ sub cmd_line {
 # -----------------------------------------------------------------
 # Process one or more commands, separated by ; or &.
 sub command(@) {
+    print ".\b"; 
+    if (not defined eval { command_s(@_) }) {
+        print "*** $@\n";
+        return 0;
+    }
+    return 1;
+}
+
+sub sig_int {
+    die "ctrl-C";
+}
+
+sub command_s(@) {
     my $ret = 1;
     my $cmd_pc = @cmd_hist;
     my $new_cmd = 1;
@@ -319,7 +336,7 @@ sub command(@) {
         }
         if ($cmd =~ /^(\w+) (:?)= (.*)$/x) {
             my $val = ($2 eq ':') ? eval($3) : $3;
-            $saved{$1} = $val;
+            save_value($1, $val) unless $if_skipping;
             next;
         }
         if ($cmd =~ /^\@(.*)/) {
@@ -330,7 +347,7 @@ sub command(@) {
             } else {
                 push @at_files, $cmd_file;
             }
-            last;
+            last; #### FIXME WRONG
         }
         if ($cmd eq 'if' or $cmd eq 'while') {
             ++$if_nest;
@@ -346,16 +363,22 @@ sub command(@) {
             } elsif ($if_skipping == 0) {
                 $if_skipping = $if_nest;
             }
-        } elsif ($cmd eq 'end' or $cmd eq 'endif' or $cmd eq 'endwhile') {
+        } elsif ($cmd eq 'end') {
             if ($if_nest == 0) {
                 print "invalid '$cmd': does not follow 'if/while'\n";
             } else {
                 my $pc = pop @while_stack;
-                if (not $if_skipping and $pc >= 0) {
-                    $the_pc = $pc;
+                my $is_while = ($pc >= 0);
+                my $expect_end = $is_while ? 'while' : 'if';
+                if (@args > 1 and $args[1] ne $expect_end) {
+                    print "expected 'end $expect_end'; got 'end $args[1]'\n";
+                } else {
+                    if (not $if_skipping and $is_while) {
+                        $the_pc = $pc;
+                    }
+                    $if_skipping = 0 if $if_skipping == $if_nest;
+                    --$if_nest;
                 }
-                $if_skipping = 0 if $if_skipping == $if_nest;
-                --$if_nest;
             }
         } else {
             my $command = $all_commands{$cmd};
@@ -417,7 +440,7 @@ sub cmd_bg_encrypt {
     return usage($cmd) if not $n or not defined $msg;
     my $enc = bg_encrypt($n, $msg);
     return cmd_fail('encrypt') if not defined $enc;
-    print number($$enc{h}), ' ', number($$enc{t}), ' ', number($$enc{xt}), ' ', number($$enc{c}), "\n";
+    print_values($$enc{h}, $$enc{t}, $$enc{xt}, $$enc{c});
     return 1;
 }
 
@@ -427,7 +450,7 @@ sub cmd_bg_decrypt {
     return usage($cmd) if not $p or not $q or not defined $c;
     my $dec = bg_decrypt($p, $q, $n, $h, $t, $xt, $c);
     return cmd_fail('decrypt') if not defined $dec;
-    print number($dec), "\n";
+    print_values($dec);
     return 1;
 }
 
@@ -481,7 +504,7 @@ sub cmd_cs_encrypt {
     return usage($cmd) if not defined $msg;
     my $enc = cs_encrypt($p, $q, $qbits, $g1, $g2, $c, $d, $h, $msg);
     return cmd_fail('encrypt') if not defined $enc;
-    print number($$enc{u1}), ' ', number($$enc{u2}), ' ', number($$enc{e}), ' ', number($$enc{v}), "\n";
+    print_values($$enc{u1}, $$enc{u2}, $$enc{e}, $$enc{v});
     return 1;
 }
 
@@ -491,7 +514,7 @@ sub cmd_cs_decrypt {
     return usage($cmd) if not defined $v;
     my $dec = cs_decrypt($p, $q, $qbits, $x1, $x2, $y1, $y2, $z, $u1, $u2, $e, $v);
     return cmd_fail('decrypt') if not defined $dec;
-    print number($dec), "\n";
+    print_values($dec);
     return 1;
 }
 
@@ -520,7 +543,7 @@ sub cmd_eg_sign {
     return usage($cmd) if not $msg;
     my $sig = eg_sign($p,$g,$x,$msg);
     return cmd_fail('sign') if not $sig;
-    print number($$sig{r}), ' ', number($$sig{s}), "\n";
+    print_values($$sig{r}, $$sig{s});
     return 1;
 }
 
@@ -539,7 +562,7 @@ sub cmd_eg_encrypt {
     return usage($cmd) if not $msg;
     my $enc = eg_encrypt($p,$g,$y,$msg);
     return cmd_fail('encrypt') if not $enc;
-    print number($$enc{r}), ' ', number($$enc{s}), "\n";
+    print_values($$enc{r}, $$enc{s});
     return 1;
 }
 
@@ -549,7 +572,7 @@ sub cmd_eg_decrypt {
     return usage($cmd) if not $s;
     my $msg = eg_decrypt($p,$g,$x,$r,$s);
     return cmd_fail('decrypt') if not defined $msg;
-    print number($msg), "\n";
+    print_values($msg);
     return 1;
 }
 
@@ -576,7 +599,7 @@ sub cmd_find_prime {
     my ($cmd, $bits) = args(\@_);
     return usage($cmd) if not $bits;
     my $n = find_prime($bits);
-    print number($n), "\n";
+    print_values($n);
     return 1;
 }
 
@@ -585,7 +608,8 @@ sub cmd_find_pq_prime {
     my ($cmd, $bits, $qbits) = args(\@_);
     return usage($cmd) if not $qbits;
     my ($p,$q,$r) = find_pq_prime($bits, $qbits);
-    print number($p), ' = ', number($q), ' * ', number($r), " +1\n";
+    # p = q*r +1
+    print_values($p, $q, $r);
     return 1;
 }
 
@@ -594,7 +618,7 @@ sub cmd_gcd {
     my ($cmd, $u, $v) = args(\@_);
     return usage($cmd) if not defined $v;
     my $gcd = gcd($u, $v);
-    print number($gcd), "\n";
+    print_values($gcd);
     return 1;
 }
 
@@ -603,7 +627,7 @@ sub cmd_inv {
     my ($cmd, $num, $mod) = args(\@_);
     return usage($cmd) if not defined $mod;
     my $inv = inv($num, $mod);
-    print number($inv), "\n";
+    print_values($inv);
     return 1;
 }
 
@@ -611,7 +635,9 @@ sub cmd_inv {
 sub cmd_is_prime {
     my ($cmd, $num) = args(\@_);
     return usage($cmd) if not $num;
-    print is_prime($num) ? "probably prime\n" : "composite\n";
+    my $is_prime = is_prime($num);
+    print $is_prime ? "probably prime\n" : "composite\n";
+    save_value('1', $is_prime);
     return 1;
 }
 
@@ -628,7 +654,7 @@ sub cmd_lcm {
     my ($cmd, $u, $v) = args(\@_);
     return usage($cmd) if not defined $v;
     my $lcm = lcm($u, $v);
-    print number($lcm), "\n";
+    print_values($lcm);
     return 1;
 }
 
@@ -637,7 +663,7 @@ sub cmd_mul {
     my ($cmd, $n1, $n2, $mod) = args(\@_);
     return usage($cmd) if not $mod;
     my $n = mul_mod($n1, $n2, $mod);
-    print number($n), "\n";
+    print_values($n);
     return 1;
 }
 
@@ -716,7 +742,7 @@ sub cmd_ou_encrypt {
     return usage($cmd) if not defined $msg;
     my $enc = ou_encrypt($n, $g, $h, $msg);
     return cmd_fail('encrypt') if not defined $enc;
-    print number($enc), "\n";
+    print_values($enc);
     return 1;
 }
 
@@ -726,7 +752,7 @@ sub cmd_ou_decrypt {
     return usage($cmd) if not defined $msg;
     my $dec = ou_decrypt($n, $g, $h, $p, $q, $msg);
     return cmd_fail('decrypt') if not defined $dec;
-    print number($dec), "\n";
+    print_values($dec);
     return 1;
 }
 
@@ -735,7 +761,7 @@ sub cmd_pow {
     my ($cmd, $base, $exp, $mod) = args(\@_);
     return usage($cmd) if not $mod;
     my $n = pow_mod($base, $exp, $mod);
-    print number($n), "\n";
+    print_values($n);
     return 1;
 }
 
@@ -759,7 +785,7 @@ sub cmd_rabin_encrypt {
     $msg = lshift($msg, $opt{'rabin-shift'}) unless $opt{'rabin-raw'};
     my $enc = rabin_encrypt($n, $msg);
     return cmd_fail('encrypt') if not defined $enc;
-    print number($enc), "\n";
+    print_values($enc);
     return 1;
 }
 
@@ -772,15 +798,17 @@ sub cmd_rabin_decrypt {
     return cmd_fail('decrypt') if not @decs;
 
     my $rabin_shift = $opt{'rabin-shift'};
+    my @ans;
     foreach my $m (@decs) {
         if ($opt{'rabin-raw'}) { # just print them all.
-            print number($m), "\n";
+            push @ans, $m;
         } elsif (($m & rmask($rabin_shift)) == 0) {
             # Found one with N low order zero bits.
             # It might be the right decryption (or we might be very unlucky).
-            print number(rshift($m, $rabin_shift)), "\n";
+            push @ans, rshift($m, $rabin_shift);
         }
     }
+    print_values(@ans);
     return 1;
 }
 
@@ -790,7 +818,7 @@ sub cmd_rabin_sign {
     return usage($cmd) if not $msg;
     my $sig = rabin_sign($p, $q, $n, $bits, $sign_nonce_bits, $msg);
     return cmd_fail('sign') if not $sig;
-    print number($$sig{u}), ' ', number($$sig{x}), "\n";
+    print_values($$sig{u}, $$sig{x});
     return 1;
 }
 
@@ -814,7 +842,7 @@ sub cmd_random {
     return usage($cmd) if $max < $min;
     my $n = random($min, $max);
     return cmd_fail("RNG($rng->{name})") if not defined $n;
-    print number($n), "\n";
+    print_values($n);
     return 1;
 }
 
@@ -849,6 +877,7 @@ sub cmd_random_string {
         $str .= substr($alpha, $r, 1);
     }
     print "$str\n";
+    save_value('1', $str);
     return 1;
 }
 
@@ -858,7 +887,7 @@ sub cmd_rc4_crypt {
     return usage($cmd) if not defined $msg;
     my $mlen = number_bytes($msg);
     my $num = rc4_crypt($k, $msg, $mlen);
-    print number($num), "\n";
+    print_values($num);
     return 1;
 }
 
@@ -867,7 +896,7 @@ sub cmd_rc4_key {
     my ($cmd, $k, $bytes) = args(\@_);
     return usage($cmd) if not defined $bytes;
     my $num = rc4_crypt($k, 0, $bytes);
-    print number($num), "\n";
+    print_values($num);
     return 1;
 }
 
@@ -878,7 +907,7 @@ sub cmd_read {
     print "$var=";
     my $value = <>;
     chomp $value;
-    $saved{$var} = $value;
+    save_value($var, $value);
     return 1;
 }
 
@@ -898,7 +927,7 @@ sub cmd_rsa_encrypt {
     my ($cmd, $n,$e,$msg) = args(\@_, 'n','e');
     return usage($cmd) if not $n or not $e or not defined $msg;
     my $num = rsa_crypt($msg, $e, $n);
-    print number($num), "\n";
+    print_values($num);
     return 1;
 }
 
@@ -907,7 +936,7 @@ sub cmd_rsa_decrypt {
     my ($cmd, $n,$d,$msg) = args(\@_, 'n','d');
     return usage($cmd) if not $n or not $d or not defined $msg;
     my $num = rsa_crypt($msg, $d, $n);
-    print number($num), "\n";
+    print_values($num);
     return 1;
 }
 
@@ -938,7 +967,7 @@ sub cmd_schnorr_sign {
     return usage($cmd) if not $msg;
     my $sig = schnorr_sign($p,$q,$a,$qbits,$s,$msg);
     return cmd_fail('sign') if not $sig;
-    print number($$sig{e}), ' ', number($$sig{y}), "\n";
+    print_values($$sig{e}, $$sig{y});
     return 1;
 }
 
@@ -948,6 +977,14 @@ sub cmd_schnorr_verify {
     return usage($cmd) if not $msg;
     return cmd_fail('verify') if not schnorr_verify($p,$q,$a,$qbits,$v,$e,$y,$msg);
     print "ok\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_sleep {
+    my ($cmd, $ms) = args(\@_);
+    return usage($cmd) if not defined $ms;
+    Time::HiRes::usleep($ms*1000);
     return 1;
 }
 
@@ -1018,7 +1055,7 @@ sub cmd_ss_encrypt {
     return usage($cmd) if not defined $msg;
     my $enc = ss_encrypt($n, $msg);
     return cmd_fail('encrypt') if not defined $enc;
-    print number($enc), "\n";
+    print_values($enc);
     return 1;
 }
 
@@ -1028,7 +1065,7 @@ sub cmd_ss_decrypt {
     return usage($cmd) if not defined $enc;
     my $msg = ss_decrypt($n, $pq, $d, $enc);
     return cmd_fail('decrypt') if not defined $msg;
-    print number($msg), "\n";
+    print_values($msg);
     return 1;
 }
 
@@ -2668,24 +2705,46 @@ sub print_map(+@) {
     my $map = shift @_;
     @_ = sort keys %$map if not @_;
     foreach my $key (@_) {
-        print $key, '= ', number($$map{$key}), "\n";
+        qprint($key, '= ', number($$map{$key}), "\n");
     }
+}
+
+# -----------------------------------------------------------------
+sub print_values {
+    for (my $i = 0; $i < @_; ++$i) {
+        my $val = $_[$i];
+        qprint(number($val));
+        qprint(' ') if $i < @_-1;
+        save_value($i+1, $val);
+    }
+    qprint("\n");
 }
 
 # -----------------------------------------------------------------
 sub print_bin($) {
     my ($data) = @_;
     for (my $i = 0; $i < length $data; ++$i) {
-        printf "%02x", ord substr($data,$i,1);
+        qprint(sprintf "%02x", ord substr($data,$i,1));
     }
+}
+
+# -----------------------------------------------------------------
+sub qprint {
+    print @_ unless $opt{quiet};
 }
 
 # -----------------------------------------------------------------
 sub save_obj(%) {
     my ($old) = @_;
     while (my ($k,$v) = each %$old) {
-        $saved{$k} = $v;
+        save_value($k, $v);
     }
+}
+
+# -----------------------------------------------------------------
+sub save_value($$) {
+    my ($var, $value) = @_;
+    $saved{$var} = $value;
 }
 
 # -----------------------------------------------------------------
