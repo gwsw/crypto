@@ -105,7 +105,7 @@ my %all_commands = (
     'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG" ],
     'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG" ],
     'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
-    'sleep'           => [ \&cmd_sleep,           "NUM ms" ],
+    'sleep'           => [ \&cmd_sleep,           "MS" ],
     'sol-decrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol-encrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol4-decrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
@@ -152,20 +152,18 @@ sub usage(;$) {
     }
     if ($cmd) {
         my $command = $all_commands{$cmd};
-        if (not $command) {
-            print "invalid command \"$cmd\"\n";
-        } else {
-            print "usage:\n";
-            usage_cmd($cmd, $command, 0);
-        }
+        print "usage:\n";
+        usage_cmd($cmd, $command, 0);
     } else { # all commands
-        print " commands: (values in {} may be '-' if preceded by *-gen)\n";
         print " command may be prefixed with \"NUM* \" to repeat.\n";
-        print "  VAR=STRING\n";
-        print "  VAR:=EXPR\n";
+        print " Vars are accessed as \$VAR. Printed output values are \$1, \$2, etc.\n";
         foreach my $wcmd (sort keys %all_commands) {
             usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt);
         }
+        usage_cmd('if');
+        usage_cmd('while');
+        print "  VAR=STRING\n";
+        print "  VAR:=EXPR\n";
     }
     return 0;
 }
@@ -173,9 +171,17 @@ sub usage(;$) {
 # -----------------------------------------------------------------
 sub usage_cmd($$$) {
     my ($cmd, $command, $opts_prt) = @_;
-    my ($handler, $args) = @$command;
-    print "  $cmd $args\n";
-    usage_options(0) if $cmd eq 'option' and not $opts_prt;
+    if ($cmd eq 'if' or $cmd eq 'else' or $cmd eq 'end') {
+        print "  if EXPR ; ... ; else ; ... ; end\n";
+    } elsif ($cmd eq 'while') {
+        print "  while EXPR ; ... ; end\n";
+    } elsif (not $command) {
+        print "invalid command \"$cmd\"\n";
+    } else {
+        my ($handler, $args) = @$command;
+        print "  $cmd $args\n";
+        usage_options(0) if $cmd eq 'option' and not $opts_prt;
+    }
 }
 
 # -----------------------------------------------------------------
@@ -226,7 +232,7 @@ sub main {
     my $ok = 1;
     for (;;) {
         my $prompt = $opt{'no-prompt'} ? '' : $if_skipping ? '?' : '>';
-        ###$prompt = "$if_nest($if_skipping) $prompt" if $saved{show_if} and $if_nest > 0;
+        $prompt = "$if_nest,$if_skipping $prompt" if $opt{verbose};
         my $line;
         if ($the_pc < 0) {
             if (@at_files) {
@@ -246,7 +252,7 @@ sub main {
                 last if not defined $line;
             }
         }
-        last if $line =~ /^\s*(q|quit|exit)\s*$/;
+        last if $line =~ /^\s*(q|quit)\s*$/;
         $ok = 0 if not cmd_line($line);
     }
     return $ok;
@@ -299,6 +305,15 @@ sub sig_int {
 }
 
 sub command_s(@) {
+    return 0 if not command_t(@_);
+    my $ret = 1;
+    while ($the_pc >= 0) {
+        $ret = 0 if not command_t();
+    }
+    return $ret;
+}
+
+sub command_t(@) {
     my $ret = 1;
     my $cmd_pc = @cmd_hist;
     my $new_cmd = 1;
@@ -349,6 +364,7 @@ sub command_s(@) {
             }
             last; #### FIXME WRONG
         }
+print "cmd=$cmd, if-nest $if_nest, skip $if_skipping\n" if $opt{verbose};
         if ($cmd eq 'if' or $cmd eq 'while') {
             ++$if_nest;
             push @while_stack, ($cmd eq 'while' ? $cmd_pc : -1);
@@ -362,6 +378,12 @@ sub command_s(@) {
                 $if_skipping = 0;
             } elsif ($if_skipping == 0) {
                 $if_skipping = $if_nest;
+            }
+        } elsif ($cmd eq 'break') {
+            if ($if_nest == 0) {
+                print "invalid 'break': does not follow 'while'\n";
+            } elsif (not $if_skipping) {
+                $if_skipping = inner_while();
             }
         } elsif ($cmd eq 'end') {
             if ($if_nest == 0) {
@@ -398,6 +420,16 @@ sub command_s(@) {
         }
     }
     return $ret;
+}
+
+# -----------------------------------------------------------------
+sub inner_while {
+    my $last_while = -1;
+    for (my $i = 0; $i < @while_stack; ++$i) {
+        $last_while = $i if $while_stack[$i] >= 0;
+    }
+    print "break is not after while\n" if $last_while < 0;
+    return $last_while;
 }
 
 # -----------------------------------------------------------------
