@@ -38,7 +38,7 @@ my %all_options = (
     'loops'       => [ 'i', "Number of loops in Miller-Rabin (default $mr_loops_default)." ],
     'no-prompt'   => [ 'b', "Don't print prompts." ],
     'perf'        => [ 'b', "Print performance stats." ],
-    'quiet'       => [ 'b', "" ],
+    'quiet'       => [ 'b', "Suppress output." ],
     'qs-pivot'    => [ 's', "QuickSort pivot (".join(',',sort keys %pivot_alias).")." ],
     'rabin-raw'   => [ 'b', "Don't pad message; decryption prints all 4 candidates." ],
     'rabin-shift' => [ 'i', "Bits to use for Rabin disambiguation (default $rabin_shift_default)." ],
@@ -78,6 +78,9 @@ my %all_commands = (
     'kx'              => [ \&cmd_kx,              "BITS" ],
     'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2" ],
     'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
+    'mh-decrypt'      => [ \&cmd_mh_decrypt,      "[B W Q R] MSG" ],
+    'mh-encrypt'      => [ \&cmd_mh_encrypt,      "[B] MSG" ],
+    'mh-gen'          => [ \&cmd_mh_gen,          "BITS BLK" ],
     'mul'             => [ \&cmd_mul,             "N1 N2 MOD" ],
     'msort'           => [ \&cmd_sort,            "NUM..." ],
     'option'          => [ \&cmd_option,          "[+!?]OPTION[=VALUE]..." ],
@@ -292,16 +295,14 @@ sub cmd_line {
 # -----------------------------------------------------------------
 # Process one or more commands, separated by ; or &.
 sub command(@) {
-    print ".\b"; 
-    if (not defined eval { command_s(@_) }) {
-        print "*** $@\n";
-        return 0;
-    }
-    return 1;
+    print ".\b" unless $opt{quiet};
+    my $r = eval { command_s(@_) };
+    print "*** $@" if not defined $r;
+    return $r;
 }
 
 sub sig_int {
-    die "ctrl-C";
+    die "ctrl-C\n";
 }
 
 sub command_s(@) {
@@ -325,7 +326,7 @@ sub command_t(@) {
     }
     while (@_) {
         # See if there is a termchar (';' or '&').
-        my $end = first_index { $_ eq ';' or $_ eq '&' } @_;
+        my $end = first_index { $_ eq ';' or $_ eq '.' or $_ eq '&' } @_;
         $end = scalar(@_) if $end < 0;
         my $termchar = ($end < @_) ? $_[$end] : '';
         my @sargs = splice @_, 0, $end; # remove args from @_
@@ -364,7 +365,7 @@ sub command_t(@) {
             }
             last; #### FIXME WRONG
         }
-print "cmd=$cmd, if-nest $if_nest, skip $if_skipping\n" if $opt{verbose};
+#print "cmd=$cmd, if-nest $if_nest, skip $if_skipping\n" if $opt{verbose};
         if ($cmd eq 'if' or $cmd eq 'while') {
             ++$if_nest;
             push @while_stack, ($cmd eq 'while' ? $cmd_pc : -1);
@@ -687,6 +688,37 @@ sub cmd_lcm {
     return usage($cmd) if not defined $v;
     my $lcm = lcm($u, $v);
     print_values($lcm);
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_mh_gen {
+    my ($cmd, $bits, $blk) = args(\@_);
+    return usage($cmd) if not $bits or $bits < 3 or not $blk or $blk < 2;
+    my $mh = mh_gen($bits, $blk);
+    return 0 if not $mh;
+    save_obj($mh);
+    print_map($mh, 'B','W','q','r');
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_mh_encrypt {
+    my ($cmd, $B,$msg) = args(\@_, 'B');
+    return usage($cmd) if not $msg;
+    my $enc = mh_encrypt($B,$msg);
+    return cmd_fail('encrypt') if not $enc;
+    print_values($enc);
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_mh_decrypt {
+    my ($cmd, $B,$W,$q,$r,$enc) = args(\@_, 'B','W','q','r');
+    return usage($cmd) if not $enc;
+    my $msg = mh_decrypt($B,$W,$q,$r,$enc);
+    return cmd_fail('decrypt') if not defined $msg;
+    print_values($msg);
     return 1;
 }
 
@@ -1210,6 +1242,111 @@ sub eg_k($) {
     }
 }
 
+
+# -----------------------------------------------------------------
+# ---- Merkle-Hellman
+# -----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+sub mh_gen($) {
+    my ($bits, $blk) = @_;
+    my $sum = lshift(1,$bits-1);
+    my @W;
+    while (@W < $blk) {
+        my $r = random($sum+1, lshift($sum,1));
+        push @W, $r;
+        $sum += $r;
+    }
+    my $q = random($sum+1, lshift($sum,1));
+    my $r = 0; # pick random r such that gcd(r,q)=1
+    while ($r == 0 or gcd($r,$q) != 1) {
+        $r = random(rshift($q,1), $q-1);
+    }
+    my @B;
+    foreach my $w (@W) {
+        push @B, mul_mod($w, $r, $q);
+    }
+    return { 'B' => \@B, 'W' => \@W, 'q' => $q, 'r' => $r, 'blk' => $blk };
+}
+
+# -----------------------------------------------------------------
+sub mh_encrypt($$) {
+    my ($B, $msg) = @_;
+    return undef if msg_too_large($msg, lshift(1,scalar @$B));
+    my $enc = 0;
+    my $mask = 1;
+    for (my $i = 0; $msg; ++$i, $mask = lshift($mask,1)) {
+        next if !($msg & $mask);
+        $enc += $$B[$i];
+        $msg &= ~$mask;
+    }
+    return $enc;
+}
+
+# -----------------------------------------------------------------
+sub mh_decrypt($$$$$) {
+    my ($B, $W, $q, $r, $enc) = @_;
+    return undef if msg_too_large($enc, asum($B));
+    my $ri = inv($r, $q);
+    if (not $ri) {
+        print "ERROR: invalid q/r values ($q/$r)\n";
+        return undef;
+    }
+    my $enc2 = mul_mod($enc, $ri, $q);
+    print "inv($r,$q) = $ri; enc2 = $enc2\n" if $opt{verbose};
+    my $X = easy_knapsack($W, $enc2);
+    return undef if not $X;
+    my $msg = 0;
+    foreach my $x (@$X) {
+        my $bit = (1 << $x);
+        if ($msg & $bit) {
+            print "ERROR: invalid encryption $enc\n";
+            return undef;
+        }
+        $msg |= $bit;
+    }
+    return $msg;
+}
+
+# -----------------------------------------------------------------
+sub asum($) {
+    my ($A) = @_;
+    my $sum = 0;
+    foreach my $a (@$A) {
+        $sum += $a;
+    }
+    return $sum;
+}
+
+# -----------------------------------------------------------------
+sub easy_knapsack($$) {
+    my ($A, $val) = @_;
+    my @X;
+    while ($val > 0) {
+        my $j = largest_LE($A, $val); # greedy
+        if ($j < 0) {
+            print "ERROR: unsolvable knapsack\n";
+            return undef;
+        }
+        print "[$j] $val - $$A[$j] = ", ($val-$$A[$j]), "\n" if $opt{verbose};
+        $val -= $$A[$j];
+        push @X, $j;
+    }
+    return \@X;
+}
+
+# -----------------------------------------------------------------
+# Return index of largest element of A which is less than or equal to $val.
+sub largest_LE($$) {
+    my ($A, $val) = @_;
+    my $best = -1;
+    for (my $j = 0; $j < @$A; ++$j) {
+        if ($$A[$j] <= $val and ($best < 0 or $$A[$j] > $$A[$best])) {
+            $best = $j;
+        }
+    }
+    return $best;
+}
 
 # -----------------------------------------------------------------
 # ---- RSA
@@ -2676,7 +2813,13 @@ sub args(+@) {
         ## } elsif ($arg =~ /^-([a-z]+)/) {
         ##     $flags .= $1;
         } else {
-            my $val = i($arg);
+            my $val;
+            if ($arg =~ /[,\s]/) {
+                my @val = split /[,\s]/, $arg;
+                $val = \@val;
+            } else {
+                $val = i($arg);
+            }
             return ($cmd) if not defined $val;
             push @rargs, $val;
         }
@@ -2728,6 +2871,14 @@ sub i($) {
 # Return printable representation.
 sub number($) {
     my ($n) = @_;
+    if (ref($n) eq 'ARRAY') {
+        my $r = '';
+        foreach my $val (@$n) {
+            $r .= ',' if $r;
+            $r .= number($val);
+        }
+        return $r;
+    }
     return $n->as_hex() if $opt{hex};
     return $n;
 }
