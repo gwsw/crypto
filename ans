@@ -5,11 +5,12 @@ my $def_lpw = 6;
 my $def_len = 10;
 my $def_key = chr(0) x 64;
 
-my $usage = "usage: ans [-k str] [-n#] [-p] [-w#] [query]\n".
+my $usage = "usage: ans [-k str] [-n#] [-p] [-w#] [-c] [query]\n".
             "       -k Key string (may use \"\\x##\" hex sequences) (default ".length($def_key)." zeros)\n".
             "       -n Chars in answer; should be even (default $def_len)\n".
             "       -p Do not prompt when reading query from stdin\n".
-            "       -w Letters per word. 0 = no word divisions (default $def_lpw)\n";
+            "       -w Letters per word. 0 = no word divisions (default $def_lpw)\n".
+            "       -c Use CVC syllables\n";
 
 use Getopt::Std;
 my %opt;
@@ -17,7 +18,7 @@ my %opt;
 # -----------------------------------------------------------------
 main();
 sub main {
-    die $usage if not getopts('k:n:puw:', \%opt);
+    die $usage if not getopts('ck:n:puw:', \%opt);
     my $query = join ' ', @ARGV;
     if (not defined $query) {
         print '>' unless $opt{p};
@@ -45,25 +46,39 @@ use Digest::SHA;
 
 sub ans {
     my ($query, $len, $key, $lpw) = @_;
-    my $lps   = 2; # letters per syllable
+    my $lps = $opt{c} ? 3 : 2; # letters per syllable
     my $cons  = 'bdfghkmprstvwyz';
     my $vowel = 'aeio';
-    $lpw -= $lpw % $lps; # make lpw multiple of lps
-
-    my $hx = 0;
+    while ($lpw % $lps) { ++$lpw; } # make lpw multiple of lps
+    while ($len % $lps) { ++$len; }
     my $ans = '';
-    my $hash = Digest::SHA::sha256($key.'|'.$query);
+    my $h = newh($key, $query);
     for (my $ax = 0; $ax < $len; $ax += $lps) {
-        if ($hx >= length($hash)) {
-            $hash = Digest::SHA::sha256($key.'|'.$hash);
-            $hx = 0;
-        }
-        # Generate syllable (cons+vowel) from one byte of hash
-        my $num = ord(substr($hash, $hx++, 1));
+        # Generate syllable from one byte of hash
+        my $num = hbyte($h);
         $ans .= substr($cons, $num % length($cons), 1);
         $ans .= substr($vowel, ($num / length($cons)) % length($vowel), 1) if $ax+1 < $len;
+        if ($lps > 2) {
+            $num = hbyte($h);
+            $ans .= substr($cons, $num % length($cons), 1);
+        }
         # Add space if current word has $lpw letters and we're not at end of output.
         $ans .= ' ' if $lpw >= $lps and $ax % $lpw == $lpw - $lps and $ax + $lps < $len;
     }
     return $ans;
+}
+
+sub newh {
+    my ($key, $query) = @_;
+    return { 'index'=> 0, 'hash'=> '', 'key'=> $key, 'query'=> $query };
+}
+
+sub hbyte {
+    my ($h) = @_;
+    if ($h->{index} >= length($h->{hash})) {
+        my $data = (length($h->{hash}) > 0) ? $h->{hash} : $h->{query};
+        $h->{hash} = Digest::SHA::sha256($h->{key}.'|'.$data);
+        $h->{index} = 0;
+    }
+    return ord(substr($h->{hash}, $h->{index}++, 1));
 }
