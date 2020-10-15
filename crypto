@@ -51,6 +51,8 @@ my %all_options = (
 );
 
 my %all_commands = (
+    '!'               => [ \&cmd_bang,            "! N" ],
+    '!!'              => [ \&cmd_bang,            "!!" ],
     'bg-decrypt'      => [ \&cmd_bg_decrypt,      "{P Q N} H T X C" ],
     'bg-encrypt'      => [ \&cmd_bg_encrypt,      "{N} MSG" ],
     'bg-gen'          => [ \&cmd_bg_gen,          "BITS QBITS" ],
@@ -131,11 +133,11 @@ my $rng; # the active RNG, returned from *_rng_init
 my %opt; # currently set options
 my @cmd_hist;
 my %saved;
-my $the_pc = -1;
+my $the_pc = 0;
 my $if_nest = 0;
 my $if_skipping = 0;
-my @while_stack;
-my @at_files;
+my @while_pc;
+my @while_nest;
 
 
 # -----------------------------------------------------------------
@@ -175,9 +177,9 @@ sub usage(;$) {
 sub usage_cmd($$$) {
     my ($cmd, $command, $opts_prt) = @_;
     if ($cmd eq 'if' or $cmd eq 'else' or $cmd eq 'end') {
-        print "  if EXPR ; ... ; else ; ... ; end\n";
+        print "  if EXPR ; ... ; else ; ... ; end [if]\n";
     } elsif ($cmd eq 'while') {
-        print "  while EXPR ; ... ; end\n";
+        print "  while EXPR ; ... ; end [while]\n";
     } elsif (not $command) {
         print "invalid command \"$cmd\"\n";
     } else {
@@ -225,48 +227,46 @@ sub main {
     # Change 'crypto help' to 'crypto help shell'.
     if (@ARGV == 1 and $ARGV[0] eq 'help') { push @ARGV, 'shell'; }
 
-    return command(@ARGV) if @ARGV; # crypto command is on cmd line
+    if ($opt{c}) {
+        return command_line($opt{c});
+    } elsif (@ARGV) {
+        return command_words(@ARGV);
+    } else {
+        return command_interactive();
+    }
+}
 
-    # Interactive mode.
+# -----------------------------------------------------------------
+# Interactive mode.
+sub command_interactive {
     my $term;
     if (eval "require Term::ReadLine::Tiny") {
         $term = new Term::ReadLine::Tiny;
     }
-    my $ok = 1;
     for (;;) {
         my $prompt = $opt{'no-prompt'} ? '' : $if_skipping ? '?' : '>';
         $prompt = "$if_nest,$if_skipping $prompt" if $opt{verbose};
         my $line;
-        if ($the_pc < 0) {
-            if (@at_files) {
-                my $file = $at_files[$#at_files];
-                $line = <$file>;
-                if (not defined $line) {
-                    pop @at_files;
-                    next;
-                }
-            } else {
-                if ($term) {
-                    $line = $term->readline($prompt);
-                } else {
-                    print $prompt;
-                    $line = <>;
-                }
-                last if not defined $line;
-            }
+        if ($term) {
+            $line = $term->readline($prompt);
+        } else {
+            print $prompt;
+            $line = <>;
         }
-        last if $line =~ /^\s*(q|quit)\s*$/;
-        $ok = 0 if not cmd_line($line);
+        last if not defined $line;
+        last if $line =~ /^\s*(q|quit|exit)\s*$/;
+        command_line($line);
     }
-    return $ok;
+    return 1;
 }
 
 # -----------------------------------------------------------------
 # Split cmd line into args. Handle whitespace and quotes.
-sub cmd_line {
+sub command_line {
     my ($line) = @_;
     my @args;
     if (defined $line) {
+        print "cmd line: $line\n" if $opt{verbose};
         $line =~ s/^\s+//; # rm leading space
         $line =~ s/\s+$//; # rm trailing space, \r, \n
         return 1 if $line eq ''; # ignore empty line
@@ -285,7 +285,7 @@ sub cmd_line {
             }
         }
     }
-    if (not command(@args)) {
+    if (not command_words(@args)) {
         print "*** command failed\n" unless $opt{'no-prompt'};
         return 0;
     }
@@ -293,144 +293,167 @@ sub cmd_line {
 }
 
 # -----------------------------------------------------------------
-# Process one or more commands, separated by ; or &.
-sub command(@) {
-    print ".\b" unless $opt{quiet};
-    my $r = eval { command_s(@_) };
-    print "*** $@" if not defined $r;
-    return $r;
+sub command_words(@) {
+    print "cmd words: ", join('|', @_), "\n" if $opt{verbose};
+    while (@_) {
+        my $end = first_index { $_ eq ';' or $_ eq '.' or $_ eq '&' } @_;
+        $end = scalar(@_) if $end < 0;
+        my $termchar = ($end < @_) ? $_[$end] : '';
+        my @args = splice @_, 0, $end; # remove args from @_
+        shift @_ if $termchar; # remove termchar from @_
+        if (@args == 1 and $args[0] =~ /^\@(.*)/) {
+            @args = ('@', $1);
+        }
+        if (@args >= 2 and $args[0] eq '@') {
+            command_file($args[1]);
+        } else {
+            unshift @args, $termchar if $termchar eq '&';
+            push @cmd_hist, \@args;
+        }
+    }
+    return command_proc();
 }
 
+# -----------------------------------------------------------------
+sub command_file {
+    my ($filename) = @_;
+    print "cmd file $filename\n" if $opt{verbose};
+    my $f;
+    if (not open $f, '<', $filename) {
+        print "cannot open $filename: $!\n";
+        return;
+    }
+    while (<$f>) {
+        chomp;
+        command_line($_);
+    }
+    close $f;
+    print "cmd file $filename done\n" if $opt{verbose};
+}
+
+# -----------------------------------------------------------------
+sub command_proc {
+    while ($the_pc < @cmd_hist) {
+        my $args = expand_vars($cmd_hist[$the_pc++]);
+        return 0 if not command_run($args);
+    }
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub command_run {
+    my ($args) = @_;
+    print "cmd run: ", join('|', @$args), "\n" if $opt{verbose};
+    my $quit_on_error = 0;
+    my $repeat = 1;
+    my $argi = 0;
+    for (;;) {
+        my $arg = $$args[$argi];
+        if ($arg eq '&') {
+            $quit_on_error = 1;
+            ++$argi;
+        } elsif ($arg =~ /^(\d+)\*$/) {
+            $repeat = $1;
+            ++$argi;
+        } else {
+            last;
+        }
+    }
+    my $cmd = $$args[$argi++];
+    my $while_cmd = ($cmd eq 'while');
+    if ($cmd eq 'if' or $while_cmd) {
+        ++$if_nest;
+        push @while_pc, $while_cmd ? $the_pc-1 : -1;
+        push @while_nest, $while_cmd ? $if_nest : -1;
+        if (not $if_skipping) {
+            # Set $if_skipping if the 'if' condition is false.
+            $if_skipping = $if_nest if not eval(join(' ',@$args[$argi .. (@$args-1)]));
+        }
+    } elsif ($cmd eq 'else') {
+        if ($if_nest == 0) {
+            print "invalid 'else': does not follow 'if'\n";
+        } elsif ($if_skipping == $if_nest) {
+            # We were in a false 'if'; now we're in a true 'else'.
+            $if_skipping = 0;
+        } elsif ($if_skipping == 0) {
+            # We were in a true 'if'; now we're in a false 'else'.
+            $if_skipping = $if_nest;
+        }
+    } elsif ($cmd eq 'break') {
+        if ($if_nest == 0) {
+            print "invalid 'break': does not follow 'while'\n";
+        } elsif (not $if_skipping) {
+            # Skip to the end of the innermost 'while' block.
+            $if_skipping = inner_while();
+        }
+    } elsif ($cmd eq 'end') {
+        if ($if_nest == 0) {
+            print "invalid '$cmd': does not follow 'if/while'\n";
+        } else {
+            my $pc = pop @while_pc;
+            pop @while_nest;
+            my $is_while = ($pc >= 0);
+            my $expect_end = $is_while ? 'while' : 'if';
+            my $actual_end = $$args[$argi];
+            if ($argi < @$args and $actual_end ne $expect_end) {
+                print "expected 'end $expect_end'; got 'end $actual_end'\n";
+            }
+            if (not $if_skipping and $is_while) {
+                $the_pc = $pc;
+            }
+            $if_skipping = 0 if $if_skipping == $if_nest; # stop skipping at end of block
+            --$if_nest;
+        }
+    } elsif ($cmd =~ /^(\w+) (:?)= (.*)$/x) { # variable assignment
+        my $val = ($2 eq ':') ? eval($3) : $3;
+        save_value($1, $val) unless $if_skipping;
+    } else { # normal command
+        my $command = $all_commands{$cmd};
+        if (not $command) {
+            print "invalid command \"$cmd\"; use \"help\" for help\n";
+            return 0;
+        }
+        return 1 if $if_skipping;
+        my ($handler) = @$command;
+        my $start_time = time();
+        while ($repeat-- > 0) {
+            my @cmd_args = @$args[($argi-1) .. (@$args-1)];
+            my $ret = eval { &$handler(@cmd_args); }; # run the cmd
+            return 0 if not $ret and $quit_on_error;
+        }
+        printf STDERR "=%.6f sec\n", time()-$start_time if $opt{perf};
+    }
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub expand_vars {
+    my ($args) = @_;
+    my @rargs;
+    for (my $i = 0; $i < @$args; ++$i) {
+        my $arg = $$args[$i];
+        while ($arg =~ /^([^\$]*) \$ ([({]?) (\w+) ([)}]?) (.*)$/x) {
+            my $v = $saved{$3};
+            $v = '?' if not defined $v;
+            $arg = $1 . $v . $5;
+        }
+        push @rargs, $arg;
+    }
+    return \@rargs;
+}
+
+# -----------------------------------------------------------------
 sub sig_int {
     die "ctrl-C\n";
 }
 
-sub command_s(@) {
-    return 0 if not command_t(@_);
-    my $ret = 1;
-    while ($the_pc >= 0) {
-        $ret = 0 if not command_t();
-    }
-    return $ret;
-}
-
-sub command_t(@) {
-    my $ret = 1;
-    my $cmd_pc = @cmd_hist;
-    my $new_cmd = 1;
-    if ($the_pc >= 0) {
-        $cmd_pc = $the_pc;
-        @_ = @{$cmd_hist[$the_pc]};
-        $the_pc = -1 if ++$the_pc >= @cmd_hist;
-        $new_cmd = 0;
-    }
-    while (@_) {
-        # See if there is a termchar (';' or '&').
-        my $end = first_index { $_ eq ';' or $_ eq '.' or $_ eq '&' } @_;
-        $end = scalar(@_) if $end < 0;
-        my $termchar = ($end < @_) ? $_[$end] : '';
-        my @sargs = splice @_, 0, $end; # remove args from @_
-        push @cmd_hist, \@sargs if $new_cmd;
-        # Expand $VARs in args.
-        my @args;
-        for (my $i = 0; $i < @sargs; ++$i) {
-            my $arg = $sargs[$i];
-            while ($arg =~ /^([^\$]*) \$ ([({]?) (\w+) ([)}]?) (.*)$/x) {
-                my $v = $saved{$3};
-                $v = '?' if not defined $v;
-                $arg = $1 . $v . $5;
-            }
-            push @args, $arg;
-        }
-        my $repeat = 1;
-        if ($args[0] =~ /^(\d+)\*$/) { $repeat = $1; shift @args; }
-        my $cmd = $args[0];
-        my $quit_on_error = 0;
-        if ($termchar) {
-            die if $termchar ne shift(@_); # discard termchar
-            $quit_on_error = 1 if $termchar eq '&';
-        }
-        if ($cmd =~ /^(\w+) (:?)= (.*)$/x) {
-            my $val = ($2 eq ':') ? eval($3) : $3;
-            save_value($1, $val) unless $if_skipping;
-            next;
-        }
-        if ($cmd =~ /^\@(.*)/) {
-            my $cmd_file;
-            if (not open($cmd_file, $1)) {
-                print "ERROR: cannot open $1: $!\n";
-                $ret = 0;
-            } else {
-                push @at_files, $cmd_file;
-            }
-            last; #### FIXME WRONG
-        }
-#print "cmd=$cmd, if-nest $if_nest, skip $if_skipping\n" if $opt{verbose};
-        if ($cmd eq 'if' or $cmd eq 'while') {
-            ++$if_nest;
-            push @while_stack, ($cmd eq 'while' ? $cmd_pc : -1);
-            if (not $if_skipping) {
-                $if_skipping = $if_nest if not eval(join(' ',@args[1..$#args]));
-            }
-        } elsif ($cmd eq 'else') {
-            if ($if_nest == 0) {
-                print "invalid 'else': does not follow 'if'\n";
-            } elsif ($if_skipping == $if_nest) {
-                $if_skipping = 0;
-            } elsif ($if_skipping == 0) {
-                $if_skipping = $if_nest;
-            }
-        } elsif ($cmd eq 'break') {
-            if ($if_nest == 0) {
-                print "invalid 'break': does not follow 'while'\n";
-            } elsif (not $if_skipping) {
-                $if_skipping = inner_while();
-            }
-        } elsif ($cmd eq 'end') {
-            if ($if_nest == 0) {
-                print "invalid '$cmd': does not follow 'if/while'\n";
-            } else {
-                my $pc = pop @while_stack;
-                my $is_while = ($pc >= 0);
-                my $expect_end = $is_while ? 'while' : 'if';
-                if (@args > 1 and $args[1] ne $expect_end) {
-                    print "expected 'end $expect_end'; got 'end $args[1]'\n";
-                } else {
-                    if (not $if_skipping and $is_while) {
-                        $the_pc = $pc;
-                    }
-                    $if_skipping = 0 if $if_skipping == $if_nest;
-                    --$if_nest;
-                }
-            }
-        } else {
-            my $command = $all_commands{$cmd};
-            if (not $command) {
-                print "invalid command \"$cmd\"; use \"help\" for help\n";
-                last;
-            }
-            next if $if_skipping;
-            my ($handler) = @$command;
-            my $start_time = time();
-            while ($repeat-- > 0) {
-                $ret = &$handler(@args); # run the cmd
-                last if not $ret and $quit_on_error;
-            }
-            printf STDERR "=%.6f sec\n", time()-$start_time if $opt{perf};
-            last if not $ret and $quit_on_error;
-        }
-    }
-    return $ret;
-}
-
 # -----------------------------------------------------------------
 sub inner_while {
-    my $last_while = -1;
-    for (my $i = 0; $i < @while_stack; ++$i) {
-        $last_while = $i if $while_stack[$i] >= 0;
+    for (my $i = @while_nest-1; $i >= 0; --$i) {
+        return $while_nest[$i] if $while_nest[$i] >= 0;
     }
-    print "break is not after while\n" if $last_while < 0;
-    return $last_while;
+    print "break is not after while\n";
+    return 0;
 }
 
 # -----------------------------------------------------------------
@@ -451,9 +474,20 @@ sub cmd_help {
 sub cmd_history {
     my ($cmd, $num) = @_;
     for (my $i = $num ? @cmd_hist - $num : 0; $i < @cmd_hist; ++$i) {
-        print "$i. ", join(' ', @{$cmd_hist[$i]}), "\n";
+        printf "%3d. %s\n", $i+1, join(' ', @{$cmd_hist[$i]});
     }
     return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_bang {
+    my ($cmd, $num) = @_;
+    $num = @cmd_hist-1 if $cmd eq '!!' or $num eq '!';
+    if ($num <= 0 or $num >= @cmd_hist) {
+        print "invalid history index $num\n";
+        return 0;
+    }
+    return command_words(@{$cmd_hist[$num-1]});
 }
 
 # -----------------------------------------------------------------
