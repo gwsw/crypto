@@ -304,7 +304,7 @@ sub command_words(@) {
         }
         if (@args >= 2 and $args[0] eq '@') {
             command_file($args[1]);
-        } elsif (@args >= 2 and $args[0] =~ /^!/) {
+        } elsif (@args >= 2 and $args[0] eq '!') {
             my $num = $args[1];
             $num = @cmd_hist if $num eq '!';
             if ($num <= 0 or $num > @cmd_hist) {
@@ -371,50 +371,14 @@ sub command_run {
         }
     }
     my $cmd = $$args[$argi++];
-    my $while_cmd = ($cmd eq 'while');
-    if ($cmd eq 'if' or $while_cmd) {
-        ++$if_nest;
-        push @while_pc, $while_cmd ? $the_pc-1 : -1;
-        push @while_nest, $while_cmd ? $if_nest : -1;
-        if (not $if_skipping) {
-            # Set $if_skipping if the 'if' condition is false.
-            $if_skipping = $if_nest if not eval(join(' ',@$args[$argi .. (@$args-1)]));
-        }
+    if ($cmd eq 'if' or $cmd eq 'while') {
+        cmd_if($cmd, join(' ', @$args[$argi .. (@$args-1)]));
     } elsif ($cmd eq 'else') {
-        if ($if_nest == 0) {
-            print "invalid 'else': does not follow 'if'\n";
-        } elsif ($if_skipping == $if_nest) {
-            # We were in a false 'if'; now we're in a true 'else'.
-            $if_skipping = 0;
-        } elsif ($if_skipping == 0) {
-            # We were in a true 'if'; now we're in a false 'else'.
-            $if_skipping = $if_nest;
-        }
+        cmd_else($cmd);
     } elsif ($cmd eq 'break') {
-        if ($if_nest == 0) {
-            print "invalid 'break': does not follow 'while'\n";
-        } elsif (not $if_skipping) {
-            # Skip to the end of the innermost 'while' block.
-            $if_skipping = inner_while();
-        }
+        cmd_break($cmd);
     } elsif ($cmd eq 'end') {
-        if ($if_nest == 0) {
-            print "invalid '$cmd': does not follow 'if/while'\n";
-        } else {
-            my $pc = pop @while_pc;
-            pop @while_nest;
-            my $is_while = ($pc >= 0);
-            my $expect_end = $is_while ? 'while' : 'if';
-            my $actual_end = $$args[$argi];
-            if ($argi < @$args and $actual_end ne $expect_end) {
-                print "expected 'end $expect_end'; got 'end $actual_end'\n";
-            }
-            if (not $if_skipping and $is_while) {
-                $the_pc = $pc;
-            }
-            $if_skipping = 0 if $if_skipping == $if_nest; # stop skipping at end of block
-            --$if_nest;
-        }
+        cmd_end($cmd, $$args[$argi]);
     } elsif ($cmd =~ /^(\w+) (:?)= (.*)$/x) { # variable assignment
         my $val = ($2 eq ':') ? eval($3) : $3;
         save_value($1, $val) unless $if_skipping;
@@ -424,17 +388,74 @@ sub command_run {
             print "invalid command \"$cmd\"; use \"help\" for help\n";
             return 0;
         }
-        return 1 if $if_skipping;
-        my ($handler) = @$command;
-        my $start_time = time();
-        while ($repeat-- > 0) {
-            my @cmd_args = @$args[($argi-1) .. (@$args-1)];
-            my $ret = eval { &$handler(@cmd_args); }; # run the cmd
-            return 0 if not $ret and $quit_on_error;
+        if (not $if_skipping) {
+            my ($handler) = @$command;
+            my $start_time = time();
+            while ($repeat-- > 0) {
+                my @cmd_args = @$args[($argi-1) .. (@$args-1)];
+                my $ret = eval { &$handler(@cmd_args); }; # run the cmd
+                return 0 if not $ret and $quit_on_error;
+            }
+            printf STDERR "=%.6f sec\n", time()-$start_time if $opt{perf};
         }
-        printf STDERR "=%.6f sec\n", time()-$start_time if $opt{perf};
     }
     return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_if {
+    my ($cmd, $cond) = @_;
+    ++$if_nest;
+    push @while_pc, $cmd eq 'while' ? $the_pc-1 : -1;
+    push @while_nest, $cmd eq 'while' ? $if_nest : -1;
+    if (not $if_skipping) {
+        # Set $if_skipping if the 'if' condition is false.
+        $if_skipping = $if_nest if not eval($cond);
+    }
+}
+
+# -----------------------------------------------------------------
+sub cmd_else {
+    if ($if_nest == 0) {
+        print "invalid 'else': does not follow 'if'\n";
+    } elsif ($if_skipping == $if_nest) {
+        # We were in a false 'if'; now we're in a true 'else'.
+        $if_skipping = 0;
+    } elsif ($if_skipping == 0) {
+        # We were in a true 'if'; now we're in a false 'else'.
+        $if_skipping = $if_nest;
+    }
+}
+
+# -----------------------------------------------------------------
+sub cmd_break {
+    if ($if_nest == 0) {
+        print "invalid 'break': does not follow 'while'\n";
+    } elsif (not $if_skipping) {
+        # Skip to the end of the innermost 'while' block.
+        $if_skipping = inner_while();
+    }
+}
+
+# -----------------------------------------------------------------
+sub cmd_end {
+    my ($cmd, $etype) = @_;
+    if ($if_nest == 0) {
+        print "invalid '$cmd': does not follow 'if/while'\n";
+    } else {
+        my $pc = pop @while_pc;
+        pop @while_nest;
+        my $is_while = ($pc >= 0);
+        my $expect_etype = $is_while ? 'while' : 'if';
+        if ($etype and $etype ne $expect_etype) {
+            print "expected 'end $expect_etype'; got 'end $etype'\n";
+        }
+        if (not $if_skipping and $is_while) {
+            $the_pc = $pc;
+        }
+        $if_skipping = 0 if $if_skipping == $if_nest; # stop skipping at end of block
+        --$if_nest;
+    }
 }
 
 # -----------------------------------------------------------------
