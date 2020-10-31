@@ -789,58 +789,65 @@ sub cmd_mul {
 # -----------------------------------------------------------------
 sub cmd_option {
     my $cmd = shift @_;
-    if (not @_) { # print all options
+    if (@_) {
+        foreach my $var (@_) {
+            return 0 if not cmd_option_var($var);
+        }
+    } else { # print all options
         foreach my $var (sort keys %all_options) {
             print_option($var);
         }
+    }
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_option_var {
+    my ($var) = @_;
+    # var may be 'name', '!name', '+name', '?name', 'name=value'.
+    my $set = undef;
+    $var =~ s/^-+//; # ignore leading dashes
+    if ($var =~ /^ ([?!+]) ([\w-]*) $/x) { # ?name or !name or +name
+        $var = $2;
+        $set = ($1 eq '?') ? -1 : ($1 eq '+') ? 1 : 0;
+    } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
+        $var = $1;
+        $set = $2;
+    } elsif ($var =~ /^ ([^=]+) = (.*) \s*$ /x) { # name=value
+        $var = $1;
+        $set = $2;
+    }
+    if (defined $set and defined $set_alias{lc($set)}) {
+        $set = $set_alias{lc($set)};
+    }
+    my $option = $all_options{$var};
+    if (not $option) {
+        print "ERROR: invalid option $var\n";
+        return 0;
+    }
+    my ($type, $desc, $optfunc) = @$option;
+    if ((defined $set and $set < 0) or ($type ne 'b' and not defined $set)) {
+        print_option($var);
         return 1;
     }
-    foreach my $var (@_) {
-        # var may be 'name', '!name', '+name', '?name', 'name=value'.
-        my $set = undef;
-        $var =~ s/^-+//; # ignore leading dashes
-        if ($var =~ /^ ([?!+]) ([\w-]*) $/x) { # ?name or !name or +name
-            $var = $2;
-            $set = ($1 eq '?') ? -1 : ($1 eq '+') ? 1 : 0;
-        } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
-            $var = $1;
-            $set = $2;
-        } elsif ($var =~ /^ ([^=]+) = (.*) \s*$ /x) { # name=value
-            $var = $1;
-            $set = $2;
-        }
-        if (defined $set and defined $set_alias{lc($set)}) {
-            $set = $set_alias{lc($set)};
-        }
-        my $option = $all_options{$var};
-        if (not $option) {
-            print "ERROR: invalid option $var\n";
+    my $value = (defined $set) ? $set : $opt{$var} ? 0 : 1;
+    if ($type eq 'i') {
+        if ($value !~ /^-?(0d)?\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
+            print "ERROR: invalid number '$value' for option $var\n";
             return 0;
         }
-        my ($type, $desc, $optfunc) = @$option;
-        if ((defined $set and $set < 0) or ($type ne 'b' and not defined $set)) {
-            print_option($var);
-            next;
-        }
-        my $value = (defined $set) ? $set : $opt{$var} ? 0 : 1;
-        if ($type eq 'i') {
-            if ($value !~ /^-?(0d)?\d+$/ and $value !~ /^0x[0-9a-f]+$/i) {
-                print "ERROR: invalid number '$value' for option $var\n";
-                return 0;
-            }
-            $value = i($value);
-        } elsif ($type eq 'b') {
-            if ($value ne '0' and $value ne '1') {
-                print "ERROR: invalid boolean '$value' for option $var (use 0,1 or on,off)\n";
-                return 0;
-            }
-        }
-        if ($optfunc and not &$optfunc($value)) { # call option handler, if any
+        $value = i($value);
+    } elsif ($type eq 'b') {
+        if ($value ne '0' and $value ne '1') {
+            print "ERROR: invalid boolean '$value' for option $var (use 0,1 or on,off)\n";
             return 0;
         }
-        $opt{$var} = $value;
-        print_option($var);
     }
+    if ($optfunc and not &$optfunc($value)) { # call option handler, if any
+        return 0;
+    }
+    $opt{$var} = $value;
+    print_option($var);
     return 1;
 }
 
@@ -2422,18 +2429,19 @@ sub bbs_rng_get_bytes($) {
     my $byte_bits = 0;
     my $rand;
     my $rand_bits = 0;
-    # Build data one bit at a time.
+    # Build data one bit at a time for simplicity.
     my $data = '';
     while ($want_bits-- > 0) {
-        if ($rand_bits == 0) {
+        if ($rand_bits == 0) { # get k more bits by squaring
             $x = mul_mod($x, $x, $n);
             $rand = $x; # ($x & $kmask) isn't necessary
             $rand_bits = $k;
         }
+        # Use one bit from $rand.
         $byte = lshift($byte,1) | ($rand & 1);
         $rand = rshift($rand, 1);
         --$rand_bits;
-        if (++$byte_bits >= 8) {
+        if (++$byte_bits >= 8) { # byte is full; append to data
             $data .= chr($byte);
             $byte_bits = 0;
             $byte = 0;
@@ -2524,7 +2532,7 @@ sub fort_rng_init($$) {
         push @pool, { digest => new Digest::SHA($sha_bits), bytes => 0 }; 
     }
     my $fort = { 'get' => \&fort_rng_get_bytes, 'set_seed' => \&fort_rng_seed,
-        'key' => '', 'ctr' => 1,'rekey_ctr' => 0, 'sha_bits' => $sha_bits,
+        'key' => '', 'ctr' => 1, 'rekey_ctr' => 0, 'sha_bits' => $sha_bits,
         'key_size' => Crypt::Cipher::AES::keysize(), 
         'cblock_size' => Crypt::Cipher::AES::blocksize(), 
         'hblock_size' => idiv($sha_bits, $bits_per_byte),
