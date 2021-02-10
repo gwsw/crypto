@@ -115,6 +115,8 @@ my %all_commands = (
     'ss-gen'          => [ \&cmd_ss_gen,          "BITS" ],
     'var'             => [ \&cmd_var,             "" ],
     'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
+    'vig-encrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR" ],
+    'vig-decrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR" ],
 );
 
 # For Solitaire.
@@ -1212,6 +1214,16 @@ sub cmd_var {
 }
 
 # -----------------------------------------------------------------
+sub cmd_vig_crypt {
+    my ($cmd, $key, $str) = @_;
+    return usage($cmd) if not defined $str;
+    $str = vig_crypt($key, $str, ($cmd =~ /encrypt/));
+    return cmd_fail($cmd) if not defined $str;
+    print $str, "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
 sub opt_rng {
     my ($value) = @_;
     if (not set_rng($value, $opt{seed})) {
@@ -1315,7 +1327,7 @@ sub eg_k($) {
 
 
 # -----------------------------------------------------------------
-# ---- Merkle-Hellman
+# ---- Merkle-Hellman Knapsack
 # -----------------------------------------------------------------
 
 # -----------------------------------------------------------------
@@ -2120,6 +2132,32 @@ sub ccn_digit($$) {
     my ($ccn, $i) = @_;
     $i = length($ccn)+$i if $i < 0;
     return ord(substr($ccn, $i, 1)) - ord('0');
+}
+
+# -----------------------------------------------------------------
+# ---- Vigenere
+# -----------------------------------------------------------------
+sub vig_crypt($$$) {
+    my ($key, $str, $encrypt) = @_;
+    my $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    $str = uc $str;
+    $key = uc $key;
+    my $res = '';
+    for (my $i = 0; $i < length $str; ++$i) {
+        my $sch = substr($str, $i, 1);
+        my $kch = substr($key, $i % length($key), 1);
+        my $sval = index $alphabet, $sch;
+        my $kval = index $alphabet, $kch;
+        return undef if $kval < 0;
+        if ($sval < 0) {
+            $res .= $sch;
+        } else {
+            $kval = -$kval if not $encrypt;
+            my $rval = ($sval + $kval) % length($alphabet);
+            $res .= substr $alphabet, $rval, 1;
+        }
+    }
+    return $res;
 }
 
 # -----------------------------------------------------------------
