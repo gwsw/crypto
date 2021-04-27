@@ -54,8 +54,8 @@ my %all_commands = (
     'bg-decrypt'      => [ \&cmd_bg_decrypt,      "{P Q N} H T X C" ],
     'bg-encrypt'      => [ \&cmd_bg_encrypt,      "{N} MSG" ],
     'bg-gen'          => [ \&cmd_bg_gen,          "BITS QBITS" ],
-    'caesar-decrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING" ],
-    'caesar-encrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING" ],
+    'caesar-decrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]" ],
+    'caesar-encrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]" ],
     'cs-decrypt'      => [ \&cmd_cs_decrypt,      "[P Q QBITS G1 G2 C D H] MSG" ],
     'cs-encrypt'      => [ \&cmd_cs_encrypt,      "[P X1 X2 Y1 Y2 Z] U1 U2 E V" ],
     'cs-gen'          => [ \&cmd_cs_gen,          "BITS" ],
@@ -115,8 +115,8 @@ my %all_commands = (
     'ss-gen'          => [ \&cmd_ss_gen,          "BITS" ],
     'var'             => [ \&cmd_var,             "" ],
     'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
-    'vig-encrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR" ],
-    'vig-decrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR" ],
+    'vig-encrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
+    'vig-decrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
 );
 
 # For Solitaire.
@@ -546,10 +546,10 @@ sub cmd_bg_decrypt {
 
 # -----------------------------------------------------------------
 sub cmd_caesar_crypt {
-    my ($cmd, $shift, $str) = @_;
+    my ($cmd, $shift, $str, $alphabet) = @_;
     return usage($cmd) if not defined $str;
-    $shift = -$shift if $cmd !~ /encrypt/;
-    $str = caesar_crypt($shift, $str);
+    my $encrypt = ($cmd =~ /encrypt/);
+    $str = caesar_crypt($shift, $str, $encrypt, $alphabet);
     return cmd_fail($cmd) if not defined $str;
     print $str, "\n";
     return 1;
@@ -1715,16 +1715,23 @@ sub bg_crypt($$$$$) {
 }
 
 # -----------------------------------------------------------------
-sub caesar_crypt($$) {
-    my ($shift, $str) = @_;
-    my $rstr = '';
-    foreach my $ch (split '', $str) {
-        my $ich = ord(uc $ch);
-        $ich = ((($ich - ord('A') + $shift) + 26) % 26) + ord('A')
-            if $ich >= ord('A') and $ich <= ord('Z');
-        $rstr .= chr $ich;
+sub caesar_crypt($$$) {
+    my ($shift, $str, $encrypt, $alphabet) = @_;
+    my $alphabet = expand_alphabet($alphabet);
+    my $alen = length $alphabet;
+    $shift = -$shift if not $encrypt;
+    my $res = '';
+    for (my $i = 0; $i < length $str; ++$i) {
+        my $sch = substr($str, $i, 1);
+        my $sval = index $alphabet, $sch;
+        if ($sval < 0) {
+            $res .= $sch;
+        } else {
+            my $rval = ($sval + $shift + $alen) % $alen;
+            $res .= substr $alphabet, $rval, 1;
+        }
     }
-    return $rstr;
+    return $res;
 }
 
 # -----------------------------------------------------------------
@@ -2137,11 +2144,10 @@ sub ccn_digit($$) {
 # -----------------------------------------------------------------
 # ---- Vigenere
 # -----------------------------------------------------------------
-sub vig_crypt($$$) {
-    my ($key, $str, $encrypt) = @_;
-    my $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    $str = uc $str;
-    $key = uc $key;
+sub vig_crypt($$$;$) {
+    my ($key, $str, $encrypt, $alphabet) = @_;
+    $alphabet = expand_alphabet($alphabet);
+    my $alen = length $alphabet;
     my $res = '';
     for (my $i = 0; $i < length $str; ++$i) {
         my $sch = substr($str, $i, 1);
@@ -2153,7 +2159,7 @@ sub vig_crypt($$$) {
             $res .= $sch;
         } else {
             $kval = -$kval if not $encrypt;
-            my $rval = ($sval + $kval) % length($alphabet);
+            my $rval = ($sval + $kval + $alen) % $alen;
             $res .= substr $alphabet, $rval, 1;
         }
     }
@@ -3044,6 +3050,15 @@ sub save_obj(%) {
     while (my ($k,$v) = each %$old) {
         save_value($k, $v);
     }
+}
+
+# -----------------------------------------------------------------
+# Expand substrings of the form "[X-Y]" to all chars between X and Y inclusive.
+sub expand_alphabet {
+    my ($str) = @_;
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if not $str;
+    $str =~ s/\[(.)-(.)\]/join('',$1..$2)/ge;
+    return $str;
 }
 
 # -----------------------------------------------------------------
