@@ -98,6 +98,8 @@ my %all_commands = (
     'rc4-decrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
     'rc4-key'         => [ \&cmd_rc4_key,         "KEY BYTES" ],
     'read'            => [ \&cmd_read,            "VAR" ],
+    'rfence-encrypt'  => [ \&cmd_rfence_crypt,    "" ],
+    'rfence-decrypt'  => [ \&cmd_rfence_crypt,    "" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
     'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
     'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
@@ -1036,6 +1038,16 @@ sub cmd_read {
     my $value = <>;
     chomp $value;
     save_value($var, $value);
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_rfence_crypt {
+    my ($cmd, $rails, $str) = @_;
+    return usage($cmd) if not defined $str;
+    $str = ($cmd =~ /encrypt/) ?  rfence_encrypt($rails, $str) : rfence_decrypt($rails, $str);
+    return cmd_fail($cmd) if not defined $str;
+    print $str, "\n";
     return 1;
 }
 
@@ -2162,6 +2174,42 @@ sub vig_crypt($$$;$) {
             my $rval = ($sval + $kval + $alen) % $alen;
             $res .= substr $alphabet, $rval, 1;
         }
+    }
+    return $res;
+}
+
+# -----------------------------------------------------------------
+# ---- Rail fence
+# -----------------------------------------------------------------
+sub rfence_encrypt($$) {
+    my ($rails, $str) = @_;
+    my $m = 2 * ($rails-1);
+    my $r = length($str) % $m;
+    $str .= substr($str, 0, $m-$r) if $r > 0;
+    my @rows;
+    for (my $i = 0; $i < length($str); ++$i) {
+        my $rail = $i % $m;
+        $rail = $m - $rail if $rail >= $rails;
+        $rows[$rail] .= substr $str, $i, 1;
+    }
+    return join('', @rows);
+}
+
+sub rfence_decrypt($$) {
+    my ($rails, $str) = @_;
+    my $m = $rails-1;
+    my $k = length($str) / (2*$m);
+    my @rowpos;
+    my $pos = 0;
+    for (my $rail = 0; $rail < $rails; ++$rail) {
+        push @rowpos, $pos;
+        $pos += ($pos == 0) ? $k : 2*$k;
+    }
+    my $res = '';
+    for (my $i = 0; $i < length($str); ++$i) {
+        my $rail = $i % (2*$m);
+        $rail = 2*$m - $rail if $rail >= $rails;
+        $res .= substr $str, $rowpos[$rail]++, 1;
     }
     return $res;
 }
