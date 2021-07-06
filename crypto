@@ -169,6 +169,7 @@ sub usage(;$) {
         usage_cmd('while');
         print "  VAR=STRING\n";
         print "  VAR:=EXPR\n";
+        print "  \@[ ]FILENAME\n";
     }
     return 0;
 }
