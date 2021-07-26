@@ -50,10 +50,13 @@ my %all_options = (
     'verbose'     => [ 'b', "Print debugging info." ],
 );
 
+my $ifctl = 1;
+
 my %all_commands = (
     'bg-decrypt'      => [ \&cmd_bg_decrypt,      "{P Q N} H T X C" ],
     'bg-encrypt'      => [ \&cmd_bg_encrypt,      "{N} MSG" ],
     'bg-gen'          => [ \&cmd_bg_gen,          "BITS QBITS" ],
+    'break'           => [ \&cmd_break,           "", $ifctl ],
     'caesar-decrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher." ],
     'caesar-encrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher." ],
     'cs-decrypt'      => [ \&cmd_cs_decrypt,      "[P Q QBITS G1 G2 C D H] MSG" ],
@@ -65,15 +68,17 @@ my %all_commands = (
     'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
     'eg-sign'         => [ \&cmd_eg_sign,         "{P G X} MSG" ],
     'eg-verify'       => [ \&cmd_eg_verify,       "{P G Y} R S MSG" ],
+    'else'            => [ \&cmd_else,            "", $ifctl ],
+    'end'             => [ \&cmd_end,             "", $ifctl ],
     'euclid'          => [ \&cmd_euclid,          "NUM1 NUM2" ],
-    'find-prime'      => [ \&cmd_find_prime,      "BITS" ],
     'find-pq-prime'   => [ \&cmd_find_pq_prime,   "BITS QBITS" ],
+    'find-prime'      => [ \&cmd_find_prime,      "BITS" ],
     'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2" ],
     'help'            => [ \&cmd_help,            "[-s] [command]" ],
     'history'         => [ \&cmd_history,         "[NUM]" ],
+    'if'              => [ \&cmd_if,              "", $ifctl ],
     'inv'             => [ \&cmd_inv,             "NUM MOD\nReturn modular multiplicative inverse [ie. (NUM*$1) % MOD = 1 ]" ],
     'is-prime'        => [ \&cmd_is_prime,        "NUM" ],
-    'sort'            => [ \&cmd_sort,            "-[iImq] NUM..." ],
     'kx'              => [ \&cmd_kx,              "BITS" ],
     'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2" ],
     'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
@@ -94,12 +99,12 @@ my %all_commands = (
     'random'          => [ \&cmd_random,          "[MIN] MAX" ],
     'random-bytes'    => [ \&cmd_random_bytes,    "BYTES" ],
     'random-string'   => [ \&cmd_random_string,   "CHARS ALPHABET" ],
-    'rc4-encrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
     'rc4-decrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
+    'rc4-encrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
     'rc4-key'         => [ \&cmd_rc4_key,         "KEY BYTES" ],
     'read'            => [ \&cmd_read,            "VAR\nRead a line from user into VAR" ],
-    'rfence-encrypt'  => [ \&cmd_rfence_crypt,    "" ],
     'rfence-decrypt'  => [ \&cmd_rfence_crypt,    "" ],
+    'rfence-encrypt'  => [ \&cmd_rfence_crypt,    "" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
     'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
     'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
@@ -112,13 +117,15 @@ my %all_commands = (
     'sol-encrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol4-decrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
     'sol4-encrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
+    'sort'            => [ \&cmd_sort,            "-[iImq] NUM..." ],
     'ss-decrypt'      => [ \&cmd_ss_decrypt,      "[N PQ D] MSG" ],
     'ss-encrypt'      => [ \&cmd_ss_encrypt,      "[N] MSG" ],
     'ss-gen'          => [ \&cmd_ss_gen,          "BITS" ],
     'var'             => [ \&cmd_var,             "\nPrint all variables" ],
     'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
-    'vig-encrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
     'vig-decrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
+    'vig-encrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
+    'while'           => [ \&cmd_if,              "", $ifctl ],
 );
 
 # For Solitaire.
@@ -424,15 +431,7 @@ sub command_run {
         }
     }
     my $cmd = $$args[$argi++];
-    if ($cmd eq 'if' or $cmd eq 'while') {
-        cmd_if($cmd, join(' ', @$args[$argi .. (@$args-1)]));
-    } elsif ($cmd eq 'else') {
-        cmd_else($cmd);
-    } elsif ($cmd eq 'break') {
-        cmd_break($cmd);
-    } elsif ($cmd eq 'end') {
-        cmd_end($cmd, $$args[$argi]);
-    } elsif ($cmd =~ /^(\w+) (:?)= (.*)$/x) { # variable assignment
+    if ($cmd =~ /^(\w+) (:?)= (.*)$/x) { # variable assignment
         my $val = ($2 eq ':') ? eval($3) : $3;
         save_value($1, $val) unless $if_skipping;
     } else { # normal command
@@ -441,7 +440,7 @@ sub command_run {
             print "invalid command \"$cmd\"; use \"help\" for help\n";
             return 0;
         }
-        if (not $if_skipping) {
+        if (not $if_skipping or $$command[2]) {
             my ($handler) = @$command;
             my $start_time = time();
             while ($repeat-- > 0) {
@@ -457,7 +456,8 @@ sub command_run {
 
 # -----------------------------------------------------------------
 sub cmd_if {
-    my ($cmd, $cond) = @_;
+    my $cmd = shift @_;
+    my $cond = join ' ', @_;
     ++$if_nest;
     push @while_pc, $cmd eq 'while' ? $the_pc-1 : -1;
     push @while_nest, $cmd eq 'while' ? $if_nest : -1;
