@@ -54,8 +54,8 @@ my %all_commands = (
     'bg-decrypt'      => [ \&cmd_bg_decrypt,      "{P Q N} H T X C" ],
     'bg-encrypt'      => [ \&cmd_bg_encrypt,      "{N} MSG" ],
     'bg-gen'          => [ \&cmd_bg_gen,          "BITS QBITS" ],
-    'caesar-decrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]" ],
-    'caesar-encrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]" ],
+    'caesar-decrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher." ],
+    'caesar-encrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher." ],
     'cs-decrypt'      => [ \&cmd_cs_decrypt,      "[P Q QBITS G1 G2 C D H] MSG" ],
     'cs-encrypt'      => [ \&cmd_cs_encrypt,      "[P X1 X2 Y1 Y2 Z] U1 U2 E V" ],
     'cs-gen'          => [ \&cmd_cs_gen,          "BITS" ],
@@ -69,9 +69,9 @@ my %all_commands = (
     'find-prime'      => [ \&cmd_find_prime,      "BITS" ],
     'find-pq-prime'   => [ \&cmd_find_pq_prime,   "BITS QBITS" ],
     'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2" ],
-    'help'            => [ \&cmd_help,            "[command]" ],
+    'help'            => [ \&cmd_help,            "[-s] [command]" ],
     'history'         => [ \&cmd_history,         "[NUM]" ],
-    'inv'             => [ \&cmd_inv,             "NUM MOD" ],
+    'inv'             => [ \&cmd_inv,             "NUM MOD\nReturn modular multiplicative inverse [ie. (NUM*$1) % MOD = 1 ]" ],
     'is-prime'        => [ \&cmd_is_prime,        "NUM" ],
     'sort'            => [ \&cmd_sort,            "-[iImq] NUM..." ],
     'kx'              => [ \&cmd_kx,              "BITS" ],
@@ -85,7 +85,7 @@ my %all_commands = (
     'ou-decrypt'      => [ \&cmd_ou_decrypt,      "[N G H P Q] MSG" ],
     'ou-encrypt'      => [ \&cmd_ou_encrypt,      "[N G H] MSG" ],
     'ou-gen'          => [ \&cmd_ou_gen,          "BITS" ],
-    'pow'             => [ \&cmd_pow,             "BASE EXP MOD" ],
+    'pow'             => [ \&cmd_pow,             "BASE EXP MOD\nReturn (BASE ^ EXP) % MOD" ],
     'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
     'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG" ],
     'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS [SIGN_NONCE_BITS]" ],
@@ -97,7 +97,7 @@ my %all_commands = (
     'rc4-encrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
     'rc4-decrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
     'rc4-key'         => [ \&cmd_rc4_key,         "KEY BYTES" ],
-    'read'            => [ \&cmd_read,            "VAR" ],
+    'read'            => [ \&cmd_read,            "VAR\nRead a line from user into VAR" ],
     'rfence-encrypt'  => [ \&cmd_rfence_crypt,    "" ],
     'rfence-decrypt'  => [ \&cmd_rfence_crypt,    "" ],
     'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
@@ -106,8 +106,8 @@ my %all_commands = (
     'schnorr-gen'     => [ \&cmd_schnorr_gen,     "BITS QBITS" ],
     'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG" ],
     'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG" ],
-    'shuffle'         => [ \&cmd_shuffle,         "NUM" ],
-    'sleep'           => [ \&cmd_sleep,           "MS" ],
+    'shuffle'         => [ \&cmd_shuffle,         "NUM\nPrint shuffled sequence of integers [1..NUM]" ],
+    'sleep'           => [ \&cmd_sleep,           "MS\nSleep for MS milliseconds" ],
     'sol-decrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol-encrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
     'sol4-decrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
@@ -115,7 +115,7 @@ my %all_commands = (
     'ss-decrypt'      => [ \&cmd_ss_decrypt,      "[N PQ D] MSG" ],
     'ss-encrypt'      => [ \&cmd_ss_encrypt,      "[N] MSG" ],
     'ss-gen'          => [ \&cmd_ss_gen,          "BITS" ],
-    'var'             => [ \&cmd_var,             "" ],
+    'var'             => [ \&cmd_var,             "\nPrint all variables" ],
     'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
     'vig-encrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
     'vig-decrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
@@ -142,51 +142,98 @@ my %sort_stats;
 
 # -----------------------------------------------------------------
 # Print usage.
-# cmd = NAME    : Print usage for command NAME.
+# cmd = NAME...    : Print usage for command NAME.
 # cmd = ''      : Print usage for all commands.
 # cmd = 'shell' : Print usage for command line and all commands.
-sub usage(;$) {
-    my ($cmd) = @_;
+sub usage {
+    if (not @_) {
+        usage_intro();
+        usage1();
+        usage_outro();
+    } else {
+        my $qsum = 0;
+        foreach my $cmd (@_) {
+            if ($cmd eq '-s') {
+                $qsum = 1;
+            } else {
+                return 1 if usage1($cmd, $qsum);
+            }
+        }
+    }
+    return 0;
+}
+
+sub usage1 {
+    my ($cmd, $qsum) = @_;
     my $opts_prt = 0;
+    my $all_cmds = not $cmd;
     if ($cmd eq 'shell') {
-        print "usage: crypto [options] [--] [command args... [{';'|'&'} command args...]...]\n";
+        print "usage: crypto [options] [--] [command args... [ [;|.|&] command args...]...]\n";
         print " options:\n";
         usage_options(1);
         $opts_prt = 1;
-        $cmd = '';
+        $all_cmds = 1;
     }
-    if ($cmd) {
-        my $command = $all_commands{$cmd};
-        print "usage:\n";
-        usage_cmd($cmd, $command, 0);
-    } else { # all commands
-        print " command may be prefixed with \"NUM* \" to repeat.\n";
-        print " Vars are accessed as \$VAR. Printed output values are \$1, \$2, etc.\n";
+    if ($all_cmds) {
+        usage_intro();
         foreach my $wcmd (sort keys %all_commands) {
-            usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt);
+            usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt, $qsum);
         }
-        usage_cmd('if');
-        usage_cmd('while');
-        print "  VAR=STRING\n";
-        print "  VAR:=EXPR\n";
-        print "  \@[ ]FILENAME\n";
+        usage_outro();
+    } else {
+        my $command = $all_commands{$cmd};
+        usage_cmd($cmd, $command, 0, $qsum);
     }
     return 0;
 }
 
 # -----------------------------------------------------------------
+sub usage_intro {
+    print " A command may be prefixed with \"NUM* \" to repeat.\n";
+    print " Multiple commands may appear in one line separated by semicolons, dots or ampersands.\n";
+    print " Semicolon and dot mean the same. Ampersand sets quit-on-error.\n";
+    print " Vars are accessed as \$VAR. Printed output values are \$1, \$2, etc.\n";
+}
+
+# -----------------------------------------------------------------
+sub usage_outro {
+    print "VAR=STRING\n";
+    print "VAR:=EXPR\n";
+    print "\@[ ]FILENAME\n";
+}
+
+# -----------------------------------------------------------------
 sub usage_cmd($$$) {
-    my ($cmd, $command, $opts_prt) = @_;
-    if ($cmd eq 'if' or $cmd eq 'else' or $cmd eq 'end') {
-        print "  if EXPR ; ... ; else ; ... ; end [if]\n";
-    } elsif ($cmd eq 'while') {
-        print "  while EXPR ; ... ; end [while]\n";
-    } elsif (not $command) {
+    my ($cmd, $command, $opts_prt, $qsum) = @_;
+    if (not $command) {
         print "invalid command \"$cmd\"\n";
     } else {
         my ($handler, $args) = @$command;
-        print "  $cmd $args\n";
+        my $maxlines = $qsum ? 1 : 9999999;
+        if (substr($args,0,1) eq '@') {
+            print_para(substr($args,1), $maxlines);
+        } else {
+            print_para("$cmd $args", $maxlines);
+        }
         usage_options(0) if $cmd eq 'option' and not $opts_prt;
+    }
+}
+
+# -----------------------------------------------------------------
+sub print_para($$) {
+    my ($str, $maxlines) = @_;
+    my $sp = index $str, ' ';
+    if ($sp <= 0) {
+        $sp = length $str;
+    } else { 
+        ++$sp;
+    }
+    my $lines = 0;
+    foreach my $line (split /\n/, $str) {
+        print ' ' x $sp if $lines > 0;
+        print $line, "\n";
+        ++$lines;
+        last if $lines >= $maxlines;
     }
 }
 
@@ -502,9 +549,8 @@ sub cmd_fail($) {
 
 # -----------------------------------------------------------------
 sub cmd_help {
-    my ($cmd, $help_cmd) = @_;
-    usage($help_cmd);
-    return 1;
+    my $cmd = shift @_;
+    return usage(@_);
 }
 
 # -----------------------------------------------------------------
