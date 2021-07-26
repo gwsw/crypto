@@ -222,12 +222,13 @@ sub usage_cmd($$$) {
 # -----------------------------------------------------------------
 sub print_para($$) {
     my ($str, $maxlines) = @_;
-    my $sp = index $str, ' ';
-    if ($sp <= 0) {
-        $sp = length $str;
-    } else { 
-        ++$sp;
-    }
+##  my $sp = index $str, ' ';
+##  if ($sp <= 0) {
+##      $sp = length $str;
+##  } else { 
+##      ++$sp;
+##  }
+    my $sp = 5;
     my $lines = 0;
     foreach my $line (split /\n/, $str) {
         print ' ' x $sp if $lines > 0;
