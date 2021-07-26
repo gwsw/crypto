@@ -50,8 +50,6 @@ my %all_options = (
     'verbose'     => [ 'b', "Print debugging info." ],
 );
 
-my $ifctl = 1;
-
 my %all_commands = (
     'bg-decrypt'      => { 'handler' => \&cmd_bg_decrypt,      'usage' => "{P Q N} H T X C" },
     'bg-encrypt'      => { 'handler' => \&cmd_bg_encrypt,      'usage' => "{N} MSG" },
