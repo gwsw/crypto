@@ -53,79 +53,79 @@ my %all_options = (
 my $ifctl = 1;
 
 my %all_commands = (
-    'bg-decrypt'      => [ \&cmd_bg_decrypt,      "{P Q N} H T X C" ],
-    'bg-encrypt'      => [ \&cmd_bg_encrypt,      "{N} MSG" ],
-    'bg-gen'          => [ \&cmd_bg_gen,          "BITS QBITS" ],
-    'break'           => [ \&cmd_break,           "", $ifctl ],
-    'caesar-decrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher." ],
-    'caesar-encrypt'  => [ \&cmd_caesar_crypt,    "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher." ],
-    'cs-decrypt'      => [ \&cmd_cs_decrypt,      "[P Q QBITS G1 G2 C D H] MSG" ],
-    'cs-encrypt'      => [ \&cmd_cs_encrypt,      "[P X1 X2 Y1 Y2 Z] U1 U2 E V" ],
-    'cs-gen'          => [ \&cmd_cs_gen,          "BITS" ],
-    'echo'            => [ \&cmd_echo,            "STRING" ],
-    'eg-decrypt'      => [ \&cmd_eg_decrypt,      "{P G X} R S" ],
-    'eg-encrypt'      => [ \&cmd_eg_encrypt,      "{P G Y} MSG" ],
-    'eg-gen'          => [ \&cmd_eg_gen,          "BITS" ],
-    'eg-sign'         => [ \&cmd_eg_sign,         "{P G X} MSG" ],
-    'eg-verify'       => [ \&cmd_eg_verify,       "{P G Y} R S MSG" ],
-    'else'            => [ \&cmd_else,            "", $ifctl ],
-    'end'             => [ \&cmd_end,             "", $ifctl ],
-    'euclid'          => [ \&cmd_euclid,          "NUM1 NUM2" ],
-    'find-pq-prime'   => [ \&cmd_find_pq_prime,   "BITS QBITS" ],
-    'find-prime'      => [ \&cmd_find_prime,      "BITS" ],
-    'gcd'             => [ \&cmd_gcd,             "NUM1 NUM2" ],
-    'help'            => [ \&cmd_help,            "[-s] [command]" ],
-    'history'         => [ \&cmd_history,         "[NUM]" ],
-    'if'              => [ \&cmd_if,              "", $ifctl ],
-    'inv'             => [ \&cmd_inv,             "NUM MOD\nReturn modular multiplicative inverse [ie. (NUM*$1) % MOD = 1 ]" ],
-    'is-prime'        => [ \&cmd_is_prime,        "NUM" ],
-    'kx'              => [ \&cmd_kx,              "BITS" ],
-    'lcm'             => [ \&cmd_lcm,             "NUM1 NUM2" ],
-    'luhn'            => [ \&cmd_ccn,             "[-g] CCN" ],
-    'mh-decrypt'      => [ \&cmd_mh_decrypt,      "[B W Q R] MSG" ],
-    'mh-encrypt'      => [ \&cmd_mh_encrypt,      "[B] MSG" ],
-    'mh-gen'          => [ \&cmd_mh_gen,          "BITS BLK" ],
-    'mul'             => [ \&cmd_mul,             "N1 N2 MOD" ],
-    'option'          => [ \&cmd_option,          "[+!?]OPTION[=VALUE]..." ],
-    'ou-decrypt'      => [ \&cmd_ou_decrypt,      "[N G H P Q] MSG" ],
-    'ou-encrypt'      => [ \&cmd_ou_encrypt,      "[N G H] MSG" ],
-    'ou-gen'          => [ \&cmd_ou_gen,          "BITS" ],
-    'pow'             => [ \&cmd_pow,             "BASE EXP MOD\nReturn (BASE ^ EXP) % MOD" ],
-    'rabin-decrypt'   => [ \&cmd_rabin_decrypt,   "{P Q N} MSG" ],
-    'rabin-encrypt'   => [ \&cmd_rabin_encrypt,   "{N} MSG" ],
-    'rabin-gen'       => [ \&cmd_rabin_gen,       "BITS [SIGN_NONCE_BITS]" ],
-    'rabin-sign'      => [ \&cmd_rabin_sign,      "{P Q N BITS SIGN_NONCE_BITS} MSG" ],
-    'rabin-verify'    => [ \&cmd_rabin_verify,    "{N BITS} U X MSG" ],
-    'random'          => [ \&cmd_random,          "[MIN] MAX" ],
-    'random-bytes'    => [ \&cmd_random_bytes,    "BYTES" ],
-    'random-string'   => [ \&cmd_random_string,   "CHARS ALPHABET" ],
-    'rc4-decrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
-    'rc4-encrypt'     => [ \&cmd_rc4_crypt,       "KEY MSG" ],
-    'rc4-key'         => [ \&cmd_rc4_key,         "KEY BYTES" ],
-    'read'            => [ \&cmd_read,            "VAR\nRead a line from user into VAR" ],
-    'rfence-decrypt'  => [ \&cmd_rfence_crypt,    "" ],
-    'rfence-encrypt'  => [ \&cmd_rfence_crypt,    "" ],
-    'rsa-decrypt'     => [ \&cmd_rsa_decrypt,     "{N D} MSG" ],
-    'rsa-encrypt'     => [ \&cmd_rsa_encrypt,     "{N E} MSG" ],
-    'rsa-gen'         => [ \&cmd_rsa_gen,         "BITS" ],
-    'schnorr-gen'     => [ \&cmd_schnorr_gen,     "BITS QBITS" ],
-    'schnorr-sign'    => [ \&cmd_schnorr_sign,    "{P Q A QBITS S} MSG" ],
-    'schnorr-verify'  => [ \&cmd_schnorr_verify,  "{P Q A QBITS V} E Y MSG" ],
-    'shuffle'         => [ \&cmd_shuffle,         "NUM\nPrint shuffled sequence of integers [1..NUM]" ],
-    'sleep'           => [ \&cmd_sleep,           "MS\nSleep for MS milliseconds" ],
-    'sol-decrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
-    'sol-encrypt'     => [ \&cmd_sol_crypt,       "[-k KEY | SHUFFLE] MSG" ],
-    'sol4-decrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
-    'sol4-encrypt'    => [ \&cmd_sol4_crypt,      "[-k KEY | SHUFFLE] MSG" ],
-    'sort'            => [ \&cmd_sort,            "-[iImq] NUM..." ],
-    'ss-decrypt'      => [ \&cmd_ss_decrypt,      "[N PQ D] MSG" ],
-    'ss-encrypt'      => [ \&cmd_ss_encrypt,      "[N] MSG" ],
-    'ss-gen'          => [ \&cmd_ss_gen,          "BITS" ],
-    'var'             => [ \&cmd_var,             "\nPrint all variables" ],
-    'verhoeff'        => [ \&cmd_ccn,             "[-g] CCN" ],
-    'vig-decrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
-    'vig-encrypt'     => [ \&cmd_vig_crypt,       "KEY_STR MSG_STR [ALPHABET]" ],
-    'while'           => [ \&cmd_if,              "", $ifctl ],
+    'bg-decrypt'      => { 'handler' => \&cmd_bg_decrypt,      'usage' => "{P Q N} H T X C" },
+    'bg-encrypt'      => { 'handler' => \&cmd_bg_encrypt,      'usage' => "{N} MSG" },
+    'bg-gen'          => { 'handler' => \&cmd_bg_gen,          'usage' => "BITS QBITS" },
+    'break'           => { 'handler' => \&cmd_break,           'usage' => "\nExit while loop.", 'ifctl' => 1 },
+    'caesar-decrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher." },
+    'caesar-encrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher." },
+    'cs-decrypt'      => { 'handler' => \&cmd_cs_decrypt,      'usage' => "[P Q QBITS G1 G2 C D H] MSG" },
+    'cs-encrypt'      => { 'handler' => \&cmd_cs_encrypt,      'usage' => "[P X1 X2 Y1 Y2 Z] U1 U2 E V" },
+    'cs-gen'          => { 'handler' => \&cmd_cs_gen,          'usage' => "BITS" },
+    'echo'            => { 'handler' => \&cmd_echo,            'usage' => "STRING" },
+    'eg-decrypt'      => { 'handler' => \&cmd_eg_decrypt,      'usage' => "{P G X} R S" },
+    'eg-encrypt'      => { 'handler' => \&cmd_eg_encrypt,      'usage' => "{P G Y} MSG" },
+    'eg-gen'          => { 'handler' => \&cmd_eg_gen,          'usage' => "BITS" },
+    'eg-sign'         => { 'handler' => \&cmd_eg_sign,         'usage' => "{P G X} MSG" },
+    'eg-verify'       => { 'handler' => \&cmd_eg_verify,       'usage' => "{P G Y} R S MSG" },
+    'else'            => { 'handler' => \&cmd_else,            'usage' => "\nElse", 'ifctl' => 1 },
+    'end'             => { 'handler' => \&cmd_end,             'usage' => "[if|while]\nEnd an if clause or while loop.", 'ifctl' => 1 },
+    'euclid'          => { 'handler' => \&cmd_euclid,          'usage' => "NUM1 NUM2" },
+    'find-pq-prime'   => { 'handler' => \&cmd_find_pq_prime,   'usage' => "BITS QBITS" },
+    'find-prime'      => { 'handler' => \&cmd_find_prime,      'usage' => "BITS" },
+    'gcd'             => { 'handler' => \&cmd_gcd,             'usage' => "NUM1 NUM2" },
+    'help'            => { 'handler' => \&cmd_help,            'usage' => "[-s] [command]" },
+    'history'         => { 'handler' => \&cmd_history,         'usage' => "[NUM]" },
+    'if'              => { 'handler' => \&cmd_if,              'usage' => "cond", 'ifctl' => 1 },
+    'inv'             => { 'handler' => \&cmd_inv,             'usage' => "NUM MOD\nReturn modular multiplicative inverse [ie. (NUM*$1) % MOD = 1 ]" },
+    'is-prime'        => { 'handler' => \&cmd_is_prime,        'usage' => "NUM" },
+    'kx'              => { 'handler' => \&cmd_kx,              'usage' => "BITS" },
+    'lcm'             => { 'handler' => \&cmd_lcm,             'usage' => "NUM1 NUM2" },
+    'luhn'            => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN" },
+    'mh-decrypt'      => { 'handler' => \&cmd_mh_decrypt,      'usage' => "[B W Q R] MSG" },
+    'mh-encrypt'      => { 'handler' => \&cmd_mh_encrypt,      'usage' => "[B] MSG" },
+    'mh-gen'          => { 'handler' => \&cmd_mh_gen,          'usage' => "BITS BLK" },
+    'mul'             => { 'handler' => \&cmd_mul,             'usage' => "N1 N2 MOD" },
+    'option'          => { 'handler' => \&cmd_option,          'usage' => "[+!?]OPTION[=VALUE]..." },
+    'ou-decrypt'      => { 'handler' => \&cmd_ou_decrypt,      'usage' => "[N G H P Q] MSG" },
+    'ou-encrypt'      => { 'handler' => \&cmd_ou_encrypt,      'usage' => "[N G H] MSG" },
+    'ou-gen'          => { 'handler' => \&cmd_ou_gen,          'usage' => "BITS" },
+    'pow'             => { 'handler' => \&cmd_pow,             'usage' => "BASE EXP MOD\nReturn (BASE ^ EXP) % MOD" },
+    'rabin-decrypt'   => { 'handler' => \&cmd_rabin_decrypt,   'usage' => "{P Q N} MSG" },
+    'rabin-encrypt'   => { 'handler' => \&cmd_rabin_encrypt,   'usage' => "{N} MSG" },
+    'rabin-gen'       => { 'handler' => \&cmd_rabin_gen,       'usage' => "BITS [SIGN_NONCE_BITS]" },
+    'rabin-sign'      => { 'handler' => \&cmd_rabin_sign,      'usage' => "{P Q N BITS SIGN_NONCE_BITS} MSG" },
+    'rabin-verify'    => { 'handler' => \&cmd_rabin_verify,    'usage' => "{N BITS} U X MSG" },
+    'random'          => { 'handler' => \&cmd_random,          'usage' => "[MIN] MAX" },
+    'random-bytes'    => { 'handler' => \&cmd_random_bytes,    'usage' => "BYTES" },
+    'random-string'   => { 'handler' => \&cmd_random_string,   'usage' => "CHARS ALPHABET" },
+    'rc4-decrypt'     => { 'handler' => \&cmd_rc4_crypt,       'usage' => "KEY MSG" },
+    'rc4-encrypt'     => { 'handler' => \&cmd_rc4_crypt,       'usage' => "KEY MSG" },
+    'rc4-key'         => { 'handler' => \&cmd_rc4_key,         'usage' => "KEY BYTES" },
+    'read'            => { 'handler' => \&cmd_read,            'usage' => "VAR\nRead a line from user into VAR" },
+    'rfence-decrypt'  => { 'handler' => \&cmd_rfence_crypt,    'usage' => "" },
+    'rfence-encrypt'  => { 'handler' => \&cmd_rfence_crypt,    'usage' => "" },
+    'rsa-decrypt'     => { 'handler' => \&cmd_rsa_decrypt,     'usage' => "{N D} MSG" },
+    'rsa-encrypt'     => { 'handler' => \&cmd_rsa_encrypt,     'usage' => "{N E} MSG" },
+    'rsa-gen'         => { 'handler' => \&cmd_rsa_gen,         'usage' => "BITS" },
+    'schnorr-gen'     => { 'handler' => \&cmd_schnorr_gen,     'usage' => "BITS QBITS" },
+    'schnorr-sign'    => { 'handler' => \&cmd_schnorr_sign,    'usage' => "{P Q A QBITS S} MSG" },
+    'schnorr-verify'  => { 'handler' => \&cmd_schnorr_verify,  'usage' => "{P Q A QBITS V} E Y MSG" },
+    'shuffle'         => { 'handler' => \&cmd_shuffle,         'usage' => "NUM\nPrint shuffled sequence of integers [1..NUM]" },
+    'sleep'           => { 'handler' => \&cmd_sleep,           'usage' => "MS\nSleep for MS milliseconds" },
+    'sol-decrypt'     => { 'handler' => \&cmd_sol_crypt,       'usage' => "[-k KEY | SHUFFLE] MSG" },
+    'sol-encrypt'     => { 'handler' => \&cmd_sol_crypt,       'usage' => "[-k KEY | SHUFFLE] MSG" },
+    'sol4-decrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => "[-k KEY | SHUFFLE] MSG" },
+    'sol4-encrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => "[-k KEY | SHUFFLE] MSG" },
+    'sort'            => { 'handler' => \&cmd_sort,            'usage' => "-[iImq] NUM..." },
+    'ss-decrypt'      => { 'handler' => \&cmd_ss_decrypt,      'usage' => "[N PQ D] MSG" },
+    'ss-encrypt'      => { 'handler' => \&cmd_ss_encrypt,      'usage' => "[N] MSG" },
+    'ss-gen'          => { 'handler' => \&cmd_ss_gen,          'usage' => "BITS" },
+    'var'             => { 'handler' => \&cmd_var,             'usage' => "\nPrint all variables" },
+    'verhoeff'        => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN" },
+    'vig-decrypt'     => { 'handler' => \&cmd_vig_crypt,       'usage' => "KEY_STR MSG_STR [ALPHABET]" },
+    'vig-encrypt'     => { 'handler' => \&cmd_vig_crypt,       'usage' => "KEY_STR MSG_STR [ALPHABET]" },
+    'while'           => { 'handler' => \&cmd_if,              'usage' => "cond\nBegin a while loop.", 'ifctl' => 1 },
 );
 
 # For Solitaire.
@@ -215,12 +215,13 @@ sub usage_cmd($$$) {
     if (not $command) {
         print "invalid command \"$cmd\"\n";
     } else {
-        my ($handler, $args) = @$command;
+        my $handler = $$command{handler};
+        my $usage = $$command{usage};
         my $maxlines = $qsum ? 1 : 9999999;
-        if (substr($args,0,1) eq '@') {
-            print_para(substr($args,1), $maxlines);
+        if (substr($usage,0,1) eq '@') {
+            print_para(substr($usage,1), $maxlines);
         } else {
-            print_para("$cmd $args", $maxlines);
+            print_para("$cmd $usage", $maxlines);
         }
         usage_options(0) if $cmd eq 'option' and not $opts_prt;
     }
@@ -440,8 +441,8 @@ sub command_run {
             print "invalid command \"$cmd\"; use \"help\" for help\n";
             return 0;
         }
-        if (not $if_skipping or $$command[2]) {
-            my ($handler) = @$command;
+        if (not $if_skipping or $$command{ifctl}) {
+            my $handler = $$command{handler};
             my $start_time = time();
             while ($repeat-- > 0) {
                 my @cmd_args = @$args[($argi-1) .. (@$args-1)];
