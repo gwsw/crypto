@@ -89,6 +89,8 @@ my %all_commands = (
     'ou-encrypt'      => { 'handler' => \&cmd_ou_encrypt,      'usage' => "[N G H] MSG" },
     'ou-gen'          => { 'handler' => \&cmd_ou_gen,          'usage' => "BITS" },
     'pow'             => { 'handler' => \&cmd_pow,             'usage' => "BASE EXP MOD\nReturn (BASE ^ EXP) % MOD" },
+    'rabbit-decrypt'  => { 'handler' => \&cmd_rabbit_crypt,    'usage' => "" },
+    'rabbit-encrypt'  => { 'handler' => \&cmd_rabbit_crypt,    'usage' => "" },
     'rabin-decrypt'   => { 'handler' => \&cmd_rabin_decrypt,   'usage' => "{P Q N} MSG" },
     'rabin-encrypt'   => { 'handler' => \&cmd_rabin_encrypt,   'usage' => "{N} MSG" },
     'rabin-gen'       => { 'handler' => \&cmd_rabin_gen,       'usage' => "BITS [SIGN_NONCE_BITS]" },
@@ -939,6 +941,15 @@ sub cmd_pow {
     return usage($cmd) if not $mod;
     my $n = pow_mod($base, $exp, $mod);
     print_values($n);
+    return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_rabbit_crypt {
+    my ($cmd, $key, $iv, $str) = @_;
+    return usage($cmd) if not $str;
+    my $data = rabbit_crypt($key, $iv, bytes_from_hex($str));
+    print hex_from_bytes($data), "\n";
     return 1;
 }
 
@@ -2262,6 +2273,166 @@ sub rfence_decrypt($$) {
 }
 
 # -----------------------------------------------------------------
+# ---- Rabbit
+# -----------------------------------------------------------------
+sub rabbit_gen($;$) {
+    my ($key, $iv) = @_;
+    my @X;
+    my @C;
+    my %r = ( 'X' => \@X, 'C' => \@C, 'carry' => 0, 'sbytes' => 0, 'wordsize' => 32 );
+    $r{wordmask} = lshift(1, $r{wordsize}) -1;
+    my $rabbit = \%r;
+
+    rabbit_keysched($rabbit, $key);
+    rabbit_iter($rabbit, 4);
+    for (my $j = 0; $j < 8; ++$j) {
+        ${$rabbit->{C}}[$j] ^= ${$rabbit->{X}}[($j+4) % 8];
+    }
+    if ($iv) {
+        rabbit_iv($rabbit, $iv);
+    }
+    return $rabbit;
+}
+
+sub rabbit_crypt($$$) {
+    my ($key, $iv, $data) = @_;
+    my $rabbit = rabbit_gen($key, $iv);
+    return undef if not $rabbit;
+    my $r = '';
+    for (my $i = 0; $i < length $data; ++$i) {
+        my $ch = ord(substr($data,$i,1)) ^ rabbit_keybyte($rabbit);
+        $r .= char $ch;
+    }
+    return $r;
+}
+
+# -----------------------------------------------------------------
+
+sub rabbit_keysched {
+    my ($rabbit, $key) = @_;
+    for (my $j = 0; $j < 8; ++$j) {
+        my $xi = ($j & 1) ? 5 : 1;
+        my $ci = ($j & 1) ? 0 : 4;
+        push @{$rabbit->{X}}, (rseg($key, $j+$xi) << 16) | rseg($key, $j+$xi-1);
+        push @{$rabbit->{C}}, (rseg($key, $j+$ci) << 16) | rseg($key, $j+$ci+1);
+    }
+}
+
+sub rseg($$$$) {
+    my ($key, $j) = @_;
+    return rshift($key, ($j * 16) % 128) & 0xffff;
+}
+
+sub rabbit_iv($) {
+    my ($rabbit, $iv) = @_;
+    my $m = $rabbit->{wordmask};
+    for (my $j = 0; $j <= 4; $j += 4) {
+        ${$rabbit->{C}}[$j] ^= $iv & $m;
+        ${$rabbit->{C}}[$j+1] ^= (rshift($iv, 48) & $m) ^ (rshift($iv, 16) & $m);
+        ${$rabbit->{C}}[$j+2] ^= (rshift($iv, 32) & $m);
+        ${$rabbit->{C}}[$j+3] ^= (rshift($iv, 32) & $m) ^ ($iv & $m);
+    }
+    rabbit_iter($rabbit, 4);
+}
+
+sub rabbit_updatectr($) {
+    my ($rabbit) = @_;
+    my @A = (
+        0x4D34D34D, 0xD34D34D3, 0x34D34D34, 0x4D34D34D,
+        0xD34D34D3, 0x34D34D34, 0x4D34D34D, 0xD34D34D3,
+    );
+    for (my $j = 0; $j < 8; ++$j) {
+        my $t = ${$rabbit->{C}}[$j] + $A[$j] + $rabbit->{carry};
+        $rabbit->{carry} = rshift($t, $rabbit->{wordsize});
+        ${$rabbit->{C}}[$j] = $t & $rabbit->{wordmask};
+    }
+print "update\n"; rabbit_dump($rabbit, 'C');
+}
+
+sub rabbit_next($) {
+    my ($rabbit) = @_;
+    rabbit_updatectr($rabbit);
+    my @G;
+    my $X = $rabbit->{X};
+    my $C = $rabbit->{C};
+    for (my $j = 0; $j < 8; ++$j) {
+        push @G, rabbit_sqadd($rabbit, $$X[$j], $$C[$j]);
+    }
+    my $ws = $rabbit->{wordsize};
+    my $m = $rabbit->{wordmask};
+    $$X[0] = ($G[0] + cls($G[7],16,$ws) + cls($G[6],16,$ws)) & $m;
+    $$X[1] = ($G[1] + cls($G[0], 8,$ws) +     $G[7])         & $m;
+    $$X[2] = ($G[2] + cls($G[1],16,$ws) + cls($G[0],16,$ws)) & $m;
+    $$X[3] = ($G[3] + cls($G[2], 8,$ws) +     $G[1])         & $m;
+    $$X[4] = ($G[4] + cls($G[3],16,$ws) + cls($G[2],16,$ws)) & $m;
+    $$X[5] = ($G[5] + cls($G[4], 8,$ws) +     $G[3])         & $m;
+    $$X[6] = ($G[6] + cls($G[5],16,$ws) + cls($G[4],16,$ws)) & $m;
+    $$X[7] = ($G[7] + cls($G[6], 8,$ws) +     $G[5])         & $m;
+print "next\n"; rabbit_dump($rabbit, 'C');
+}
+
+sub rabbit_sqadd($$$) {
+    my ($rabbit, $u, $v) = @_;
+    my $s = ($u + $v) & $rabbit->{wordmask};
+    my $s2 = $s * $s;
+    my $r1 = rshift($s2, $rabbit->{wordsize});
+    die if $r1 > $rabbit->{wordmask};
+    my $r2 = $s2 & $rabbit->{wordmask};
+    my $r = $r1 ^ $r2;
+    return $r;
+}
+
+sub rabbit_iter($$) {
+    my ($rabbit, $iter) = @_;
+    for (my $i = 0; $i < $iter; ++$i) {
+        rabbit_next($rabbit);
+    }
+}
+
+sub rabbit_extract($) {
+    my ($rabbit) = @_;
+    my $X = $rabbit->{X};
+    my $S = ($$X[0] & 0xffff) ^ ($$X[5] >> 16);
+    $S |= (($$X[3] & 0xffff) ^ ($$X[0] >> 16)) << 16;
+    $S |= (($$X[2] & 0xffff) ^ ($$X[7] >> 16)) << 32;
+    $S |= (($$X[5] & 0xffff) ^ ($$X[2] >> 16)) << 48;
+    $S |= (($$X[4] & 0xffff) ^ ($$X[1] >> 16)) << 64;
+    $S |= (($$X[7] & 0xffff) ^ ($$X[4] >> 16)) << 80;
+    $S |= (($$X[6] & 0xffff) ^ ($$X[3] >> 16)) << 96;
+    $S |= (($$X[1] & 0xffff) ^ ($$X[6] >> 16)) << 112;
+    return $S;
+}
+
+sub rabbit_keybyte($) {
+    my ($rabbit) = @_;
+    if ($rabbit->{sbytes} == 0) {
+        $rabbit->{S} = rabbit_extract($rabbit);
+        $rabbit->{sbytes} = 16;
+        rabbit_next($rabbit);
+    }
+    $rabbit->{sbytes}--;
+    return rshift($rabbit->{S}, $rabbit->{sbytes}) & 0xff;
+}
+
+sub rabbit_dump {
+    my ($rabbit, $only) = @_;
+    if (not $only or $only eq 'X') {
+        printf "X = ";
+        for (my $j = 0; $j < 8; ++$j) {
+            printf "%08x ", ${$rabbit->{X}}[$j];
+        }
+        printf "\n";
+    }
+    if (not $only or $only eq 'C') {
+        printf "C = ";
+        for (my $j = 0; $j < 8; ++$j) {
+            printf "%08x ", ${$rabbit->{C}}[$j];
+        }
+        printf "\n";
+    }
+}
+
+# -----------------------------------------------------------------
 # ---- Sort
 # -----------------------------------------------------------------
 
@@ -2967,6 +3138,15 @@ sub rshift($$) {
 }
 
 # -----------------------------------------------------------------
+sub cls($$$) {
+    my ($n, $shift, $wsize) = @_;
+    my $m = lshift(1, $wsize) -1;
+    my $r = (lshift($n, $shift) & $m) | rshift($n, $wsize-$shift);
+##print "cls(",$n->as_hex(),",$shift,$wsize) = ",$r->as_hex(),"\n";
+    return $r;
+}
+
+# -----------------------------------------------------------------
 sub rmask($) {
     my ($n) = @_;
     return (lshift(1, $n) - 1);
@@ -3078,6 +3258,26 @@ sub int_from_bytes($$) {
         }
     }
     return $num;
+}
+
+# -----------------------------------------------------------------
+sub hex_from_bytes($) {
+    my ($data) = @_;
+    my $hex = '';
+    for (my $i = 0; $i < length $data; ++$i) {
+        $hex .= sprintf "%02x", ord substr($data, $i, 1);
+    }
+    return $hex;
+}
+
+# -----------------------------------------------------------------
+sub bytes_from_hex($) {
+    my ($hex) = @_;
+    my $data = '';
+    for (my $i = 0; $i < length $hex; $i += 2) {
+        $data .= chr hex(substr($hex, $i, 2));
+    }
+    return $data;
 }
 
 # -----------------------------------------------------------------
