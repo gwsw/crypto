@@ -50,16 +50,18 @@ my %all_options = (
     'verbose'     => [ 'b', "Print debugging info." ],
 );
 
+my $sol_usage = "[-k KEY | SHUFFLE] MSG\nEncrypt alpha string by Solitaire. KEY=alpha-string, SHUFFLE=perm(1..54).";
+
 my %all_commands = (
-    'bg-decrypt'      => { 'handler' => \&cmd_bg_decrypt,      'usage' => "{P Q N} H T X C" },
-    'bg-encrypt'      => { 'handler' => \&cmd_bg_encrypt,      'usage' => "{N} MSG" },
-    'bg-gen'          => { 'handler' => \&cmd_bg_gen,          'usage' => "BITS QBITS" },
+    'bg-decrypt'      => { 'handler' => \&cmd_bg_decrypt,      'usage' => "{P Q N} H T X C\nDecrypt " },
+    'bg-encrypt'      => { 'handler' => \&cmd_bg_encrypt,      'usage' => "{N} MSG\nEncrypt MSG with Blum-Goldwasser key N" },
+    'bg-gen'          => { 'handler' => \&cmd_bg_gen,          'usage' => "BITS\nGenerate Blum-Goldwasser key public=N, private=P,Q" },
     'break'           => { 'handler' => \&cmd_break,           'usage' => "\nExit while loop.", 'ifctl' => 1 },
     'caesar-decrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher." },
     'caesar-encrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher." },
     'cs-decrypt'      => { 'handler' => \&cmd_cs_decrypt,      'usage' => "[P Q QBITS G1 G2 C D H] MSG" },
     'cs-encrypt'      => { 'handler' => \&cmd_cs_encrypt,      'usage' => "[P X1 X2 Y1 Y2 Z] U1 U2 E V" },
-    'cs-gen'          => { 'handler' => \&cmd_cs_gen,          'usage' => "BITS" },
+    'cs-gen'          => { 'handler' => \&cmd_cs_gen,          'usage' => "BITS\Generate nCramer-Shoup key" },
     'echo'            => { 'handler' => \&cmd_echo,            'usage' => "STRING" },
     'eg-decrypt'      => { 'handler' => \&cmd_eg_decrypt,      'usage' => "{P G X} R S" },
     'eg-encrypt'      => { 'handler' => \&cmd_eg_encrypt,      'usage' => "{P G Y} MSG" },
@@ -68,22 +70,22 @@ my %all_commands = (
     'eg-verify'       => { 'handler' => \&cmd_eg_verify,       'usage' => "{P G Y} R S MSG" },
     'else'            => { 'handler' => \&cmd_else,            'usage' => "\nElse", 'ifctl' => 1 },
     'end'             => { 'handler' => \&cmd_end,             'usage' => "[if|while]\nEnd an if clause or while loop.", 'ifctl' => 1 },
-    'euclid'          => { 'handler' => \&cmd_euclid,          'usage' => "NUM1 NUM2" },
+    'euclid'          => { 'handler' => \&cmd_euclid,          'usage' => "NUM1 NUM2\nUse Extended Euclidean Algorithm to find GCD." },
     'find-pq-prime'   => { 'handler' => \&cmd_find_pq_prime,   'usage' => "BITS QBITS" },
     'find-prime'      => { 'handler' => \&cmd_find_prime,      'usage' => "BITS" },
-    'gcd'             => { 'handler' => \&cmd_gcd,             'usage' => "NUM1 NUM2" },
+    'gcd'             => { 'handler' => \&cmd_gcd,             'usage' => "NUM1 NUM2\nUse Extended Euclidean Algorithm to find GCD." },
     'help'            => { 'handler' => \&cmd_help,            'usage' => "[-s] [command]" },
     'history'         => { 'handler' => \&cmd_history,         'usage' => "[NUM]" },
     'if'              => { 'handler' => \&cmd_if,              'usage' => "cond", 'ifctl' => 1 },
     'inv'             => { 'handler' => \&cmd_inv,             'usage' => "NUM MOD\nReturn modular multiplicative inverse [ie. (NUM*$1) % MOD = 1 ]" },
     'is-prime'        => { 'handler' => \&cmd_is_prime,        'usage' => "NUM" },
-    'kx'              => { 'handler' => \&cmd_kx,              'usage' => "BITS" },
+    'kx'              => { 'handler' => \&cmd_kx,              'usage' => "BITSRun example Diffie-Hellman key exchange." },
     'lcm'             => { 'handler' => \&cmd_lcm,             'usage' => "NUM1 NUM2" },
-    'luhn'            => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN" },
+    'luhn'            => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN\nRun Luhn algorithm on credit card number. -g = generate check digit." },
     'mh-decrypt'      => { 'handler' => \&cmd_mh_decrypt,      'usage' => "[B W Q R] MSG" },
     'mh-encrypt'      => { 'handler' => \&cmd_mh_encrypt,      'usage' => "[B] MSG" },
     'mh-gen'          => { 'handler' => \&cmd_mh_gen,          'usage' => "BITS BLK" },
-    'mul'             => { 'handler' => \&cmd_mul,             'usage' => "N1 N2 MOD" },
+    'mul'             => { 'handler' => \&cmd_mul,             'usage' => "N1 N2 [MOD]\nCompute (N1 * N2) % MOD, or just N1 * N2 if MOD is missing." },
     'option'          => { 'handler' => \&cmd_option,          'usage' => "[+!?]OPTION[=VALUE]..." },
     'ou-decrypt'      => { 'handler' => \&cmd_ou_decrypt,      'usage' => "[N G H P Q] MSG" },
     'ou-encrypt'      => { 'handler' => \&cmd_ou_encrypt,      'usage' => "[N G H] MSG" },
@@ -113,18 +115,18 @@ my %all_commands = (
     'schnorr-verify'  => { 'handler' => \&cmd_schnorr_verify,  'usage' => "{P Q A QBITS V} E Y MSG" },
     'shuffle'         => { 'handler' => \&cmd_shuffle,         'usage' => "NUM\nPrint shuffled sequence of integers [1..NUM]" },
     'sleep'           => { 'handler' => \&cmd_sleep,           'usage' => "MS\nSleep for MS milliseconds" },
-    'sol-decrypt'     => { 'handler' => \&cmd_sol_crypt,       'usage' => "[-k KEY | SHUFFLE] MSG" },
-    'sol-encrypt'     => { 'handler' => \&cmd_sol_crypt,       'usage' => "[-k KEY | SHUFFLE] MSG" },
-    'sol4-decrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => "[-k KEY | SHUFFLE] MSG" },
-    'sol4-encrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => "[-k KEY | SHUFFLE] MSG" },
-    'sort'            => { 'handler' => \&cmd_sort,            'usage' => "-[iImq] NUM..." },
+    'sol-decrypt'     => { 'handler' => \&cmd_sol_crypt,       'usage' => $sol_usage,
+    'sol-encrypt'     => { 'handler' => \&cmd_sol_crypt,       'usage' => $sol_usage,
+    'sol4-decrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => $sol_usage,
+    'sol4-encrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => $sol_usage,
+    'sort'            => { 'handler' => \&cmd_sort,            'usage' => "-[iImq] NUM...\nSort numbers. -i=insertions, -I=insertion+binary, -m=merge, -q=quicksort." },
     'ss-decrypt'      => { 'handler' => \&cmd_ss_decrypt,      'usage' => "[N PQ D] MSG" },
     'ss-encrypt'      => { 'handler' => \&cmd_ss_encrypt,      'usage' => "[N] MSG" },
-    'ss-gen'          => { 'handler' => \&cmd_ss_gen,          'usage' => "BITS" },
+    'ss-gen'          => { 'handler' => \&cmd_ss_gen,          'usage' => "BITS\nGenerate Schmidt-Samoa key. public=N, private=PQ,D" },
     'var'             => { 'handler' => \&cmd_var,             'usage' => "\nPrint all variables" },
-    'verhoeff'        => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN" },
-    'vig-decrypt'     => { 'handler' => \&cmd_vig_crypt,       'usage' => "KEY_STR MSG_STR [ALPHABET]" },
-    'vig-encrypt'     => { 'handler' => \&cmd_vig_crypt,       'usage' => "KEY_STR MSG_STR [ALPHABET]" },
+    'verhoeff'        => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN\nRun Verhoeff algorithm on credit card number. -g = generate check digit." },
+    'vig-decrypt'     => { 'handler' => \&cmd_vig_crypt,       'usage' => "KEY_STR MSG_STR [ALPHABET]\nDecrypt msg with Vigenere." },
+    'vig-encrypt'     => { 'handler' => \&cmd_vig_crypt,       'usage' => "KEY_STR MSG_STR [ALPHABET]\nEncrypt msg with Vigenere." },
     'while'           => { 'handler' => \&cmd_if,              'usage' => "cond\nBegin a while loop.", 'ifctl' => 1 },
 );
 
@@ -359,12 +361,13 @@ sub command_words(@) {
         my $termchar = ($end < @_) ? $_[$end] : '';
         my @args = splice @_, 0, $end; # remove args from @_
         shift @_ if $termchar; # remove termchar from @_
-        if (@args == 1 and $args[0] =~ /^([!\@])(.*)/) {
-            # Convert ['@xxx'] to ['@','xxx']. Same with "!xxx".
-            @args = ($1, $2); 
+        if ($args[0] =~ /^([!\@])(.*)/) {
+            # Convert ['@xxx',..] to ['@','xxx',..]. Same with "!xxx".
+            splice @args, 0, 1, $1, $2;
         }
         if (@args >= 2 and $args[0] eq '@') {
-            command_file($args[1]);
+            shift @args;
+            command_file(@args);
         } elsif (@args >= 2 and $args[0] eq '!') {
             my $num = $args[1];
             $num = @cmd_hist if $num eq '!';
@@ -383,8 +386,8 @@ sub command_words(@) {
 
 # -----------------------------------------------------------------
 sub command_file {
-    my ($filename) = @_;
-    print "cmd file $filename\n" if $opt{verbose};
+    my $filename = shift @_;
+    print "cmd file $filename, args ".join(',',@_)."\n" if $opt{verbose};
     my $f;
     if (not open $f, '<', $filename) {
         print "cannot open $filename: $!\n";
@@ -833,8 +836,8 @@ sub cmd_mh_decrypt {
 # -----------------------------------------------------------------
 sub cmd_mul {
     my ($cmd, $n1, $n2, $mod) = args(\@_);
-    return usage($cmd) if not $mod;
-    my $n = mul_mod($n1, $n2, $mod);
+    return usage($cmd) if not $n2;
+    my $n = $mod ? mul_mod($n1, $n2, $mod) : $n1 * $n2;
     print_values($n);
     return 1;
 }
@@ -2255,8 +2258,8 @@ sub rfence_encrypt($$) {
 
 sub rfence_decrypt($$) {
     my ($rails, $str) = @_;
-    my $m = $rails-1;
-    my $k = length($str) / (2*$m);
+    my $m = 2 * ($rails-1);
+    my $k = length($str) / $m;
     my @rowpos;
     my $pos = 0;
     for (my $rail = 0; $rail < $rails; ++$rail) {
@@ -2265,8 +2268,8 @@ sub rfence_decrypt($$) {
     }
     my $res = '';
     for (my $i = 0; $i < length($str); ++$i) {
-        my $rail = $i % (2*$m);
-        $rail = 2*$m - $rail if $rail >= $rails;
+        my $rail = $i % $m;
+        $rail = $m - $rail if $rail >= $rails;
         $res .= substr $str, $rowpos[$rail]++, 1;
     }
     return $res;
