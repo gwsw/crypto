@@ -29,6 +29,7 @@ my %all_rngs = (
     'sim' => \&sim_rng_init, 
     'twi' => \&twi_rng_init, 
     'fort' => \&fort_rng_init, 
+    'lfsr' => \&lfsr_rng_init,
 );
 
 my %all_options = (
@@ -185,6 +186,7 @@ sub usage1 {
     }
     if ($all_cmds) {
         usage_intro();
+        print "\n";
         foreach my $wcmd (sort keys %all_commands) {
             usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt, $qsum);
         }
@@ -2604,8 +2606,11 @@ sub shuffle($) {
 sub set_rng($$) {
     my ($rname, $seed) = @_;
     my $bits = $rng_bits_default;
-    if ($rname =~ /^ ([^:]+) : (\d+)$ /x) {
-        ($rname, $bits) = ($1,$2);
+    my @args;
+    if ($rname =~ /^ ([^:]+) : (.+)$ /x) {
+        $rname = $1;
+        @args = split /:/, $2;
+        $bits = shift @args;
     }
     if ($seed =~ /^(\d{1,12})\@(\S+)$/) {
         $seed = read_file($2, $1);
@@ -2617,7 +2622,7 @@ sub set_rng($$) {
         print "ERROR: invalid RNG \"$rname\"\n";
         return 0;
     }
-    my $new_rng = &$rng_init($bits, $seed);
+    my $new_rng = &$rng_init($bits, $seed, @args);
     return 0 if not $new_rng;
     $new_rng->{name} = $rname;
     $rng = $new_rng;
@@ -2660,6 +2665,15 @@ sub get_bytes {
     return $data;
 }
 
+sub get_bitbyte {
+    my ($obj) = @_;
+    my $r = 0;
+    for (my $i = 0; $i < 8; ++$i) {
+        $r = ($r << 1) | $obj->{get_bit}($obj);
+    }
+    return $r;
+}
+
 # -----------------------------------------------------------------
 # Standard RNG. Uses rand().
 
@@ -2674,6 +2688,34 @@ sub std_rng_init($$) {
 sub std_rng_get_byte($) {
     my ($std) = @_;
     return (int(rand(0x1000000)) >> 8) & 0xff;
+}
+
+# -----------------------------------------------------------------
+# LFSR RNG.
+
+sub lfsr_rng_init($$) {
+    my ($bits, $seed, $poly) = @_;
+    my $state = 1;
+    if ($seed and length($seed) > 0) {
+        $state = int_from_bytes($seed, 8);
+    }
+    return { 'get' => \&get_bytes, 'get_byte' => \&get_bitbyte, 'get_bit' => \&lfsr_rng_get_bit,
+             'bits' => $bits, 'state' => $state, 'poly' => $poly };
+}
+
+sub lfsr_rng_get_bit($) {
+    my ($lfsr) = @_;
+    my $state = $lfsr->{state};
+    my $nstate = $state << 1;
+    my $new_bit = 0;
+    for (my $bit = 0; $bit < $lfsr->{bits}; ++$bit) {
+        if ($lfsr->{poly} & (1 << $bit)) {
+            $new_bit ^= $state >> $bit;
+        }
+    }
+    $new_bit &= 1;
+    $lfsr->{state} = $nstate | $new_bit;
+    return $new_bit;
 }
 
 # -----------------------------------------------------------------
