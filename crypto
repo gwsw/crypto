@@ -63,19 +63,19 @@ my %all_commands = (
     'cs-decrypt'      => { 'handler' => \&cmd_cs_decrypt,      'usage' => "[P Q QBITS G1 G2 C D H] MSG" },
     'cs-encrypt'      => { 'handler' => \&cmd_cs_encrypt,      'usage' => "[P X1 X2 Y1 Y2 Z] U1 U2 E V" },
     'cs-gen'          => { 'handler' => \&cmd_cs_gen,          'usage' => "BITS\Generate nCramer-Shoup key" },
-    'echo'            => { 'handler' => \&cmd_echo,            'usage' => "STRING" },
-    'eg-decrypt'      => { 'handler' => \&cmd_eg_decrypt,      'usage' => "{P G X} R S" },
-    'eg-encrypt'      => { 'handler' => \&cmd_eg_encrypt,      'usage' => "{P G Y} MSG" },
-    'eg-gen'          => { 'handler' => \&cmd_eg_gen,          'usage' => "BITS" },
-    'eg-sign'         => { 'handler' => \&cmd_eg_sign,         'usage' => "{P G X} MSG" },
-    'eg-verify'       => { 'handler' => \&cmd_eg_verify,       'usage' => "{P G Y} R S MSG" },
+    'echo'            => { 'handler' => \&cmd_echo,            'usage' => "[STRING...\nPrint arguments." },
+    'eg-decrypt'      => { 'handler' => \&cmd_eg_decrypt,      'usage' => "{P G X} R S\nDecrypt message with (private) ElGamal key." },
+    'eg-encrypt'      => { 'handler' => \&cmd_eg_encrypt,      'usage' => "{P G Y} MSG\nEncrypt MSG with (public) ElGamal key." },
+    'eg-gen'          => { 'handler' => \&cmd_eg_gen,          'usage' => "BITS\nGenerate ElGamal key. public=P,G,Y; private=X" },
+    'eg-sign'         => { 'handler' => \&cmd_eg_sign,         'usage' => "{P G X} MSG\nSign MSG with ElGamal key." },
+    'eg-verify'       => { 'handler' => \&cmd_eg_verify,       'usage' => "{P G Y} R S MSG\nVerify ElGamal signature." },
     'else'            => { 'handler' => \&cmd_else,            'usage' => "\nElse", 'ifctl' => 1 },
     'end'             => { 'handler' => \&cmd_end,             'usage' => "[if|while]\nEnd an if clause or while loop.", 'ifctl' => 1 },
     'euclid'          => { 'handler' => \&cmd_euclid,          'usage' => "NUM1 NUM2\nUse Extended Euclidean Algorithm to find GCD." },
     'find-pq-prime'   => { 'handler' => \&cmd_find_pq_prime,   'usage' => "BITS QBITS" },
     'find-prime'      => { 'handler' => \&cmd_find_prime,      'usage' => "BITS" },
     'gcd'             => { 'handler' => \&cmd_gcd,             'usage' => "NUM1 NUM2\nUse Extended Euclidean Algorithm to find GCD." },
-    'help'            => { 'handler' => \&cmd_help,            'usage' => "[-s] [command]" },
+    'help'            => { 'handler' => \&cmd_help,            'usage' => "[-s] [command]\nPrint usage of specified command, or of all commands. command may end in star as wildcard." },
     'history'         => { 'handler' => \&cmd_history,         'usage' => "[NUM]" },
     'if'              => { 'handler' => \&cmd_if,              'usage' => "cond", 'ifctl' => 1 },
     'inv'             => { 'handler' => \&cmd_inv,             'usage' => "NUM MOD\nReturn modular multiplicative inverse [ie. (NUM*$1) % MOD = 1 ]" },
@@ -188,12 +188,16 @@ sub usage1 {
         usage_intro();
         print "\n";
         foreach my $wcmd (sort keys %all_commands) {
-            usage_cmd($wcmd, $all_commands{$wcmd}, $opts_prt, $qsum);
+            usage_cmd($wcmd, $opts_prt, $qsum);
         }
         usage_outro();
+    } elsif ($cmd =~ /\*$/) {
+        foreach my $wcmd (sort keys %all_commands) {
+            usage_cmd($wcmd, $opts_prt, $qsum) 
+                if substr($cmd,0,length($cmd)-1) eq substr($wcmd,0,length($cmd)-1);
+        }
     } else {
-        my $command = $all_commands{$cmd};
-        usage_cmd($cmd, $command, 0, $qsum);
+        usage_cmd($cmd, 0, $qsum);
     }
     return 0;
 }
@@ -215,7 +219,8 @@ sub usage_outro {
 
 # -----------------------------------------------------------------
 sub usage_cmd($$$) {
-    my ($cmd, $command, $opts_prt, $qsum) = @_;
+    my ($cmd, $opts_prt, $qsum) = @_;
+    my $command = $all_commands{$cmd}; 
     if (not $command) {
         print "invalid command \"$cmd\"\n";
     } else {
