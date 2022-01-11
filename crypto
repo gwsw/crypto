@@ -18,6 +18,7 @@ my $rng_bits_default    = 32;
 my $mr_loops_default    = 8;
 my $rabin_shift_default = 8;
 my $qs_pivot_default    = 'mid';
+my $para_space          = 5;
 
 my %set_alias = ( 'on' => 1, 'off' => 0 );
 my %pivot_alias = ( 'lo' => 1, 'hi' => 2, 'mid' => 3, 'med3' => 4 );
@@ -56,7 +57,7 @@ my $sol_usage = "[-k KEY | SHUFFLE] MSG\nEncrypt alpha string by Solitaire. KEY=
 my %all_commands = (
     'bg-decrypt'      => { 'handler' => \&cmd_bg_decrypt,      'usage' => "{P Q N} H T X C\nDecrypt " },
     'bg-encrypt'      => { 'handler' => \&cmd_bg_encrypt,      'usage' => "{N} MSG\nEncrypt MSG with Blum-Goldwasser key N" },
-    'bg-gen'          => { 'handler' => \&cmd_bg_gen,          'usage' => "BITS\nGenerate Blum-Goldwasser key public=N, private=P,Q" },
+    'bg-gen'          => { 'handler' => \&cmd_bg_gen,          'usage' => "BITS\nGenerate Blum-Goldwasser key. public=N, private=P,Q" },
     'break'           => { 'handler' => \&cmd_break,           'usage' => "\nExit while loop.", 'ifctl' => 1 },
     'caesar-decrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher." },
     'caesar-encrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher." },
@@ -157,9 +158,7 @@ my %sort_stats;
 # cmd = 'shell' : Print usage for command line and all commands.
 sub usage {
     if (not @_) {
-        usage_intro();
         usage1();
-        usage_outro();
     } else {
         my $qsum = 0;
         foreach my $cmd (@_) {
@@ -212,9 +211,13 @@ sub usage_intro {
 
 # -----------------------------------------------------------------
 sub usage_outro {
+	my $sp = ' ' x $para_space;
     print "VAR=STRING\n";
+    print $sp, "Set variable to literal string\n";
     print "VAR:=EXPR\n";
+    print $sp, "Set variable to evaluation of expression\n";
     print "\@[ ]FILENAME\n";
+    print $sp, "Execute commands from a file\n";
 }
 
 # -----------------------------------------------------------------
@@ -245,10 +248,9 @@ sub print_para($$) {
 ##  } else { 
 ##      ++$sp;
 ##  }
-    my $sp = 5;
     my $lines = 0;
     foreach my $line (split /\n/, $str) {
-        print ' ' x $sp if $lines > 0;
+        print ' ' x $para_space if $lines > 0;
         print $line, "\n";
         ++$lines;
         last if $lines >= $maxlines;
