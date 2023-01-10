@@ -6,7 +6,7 @@ use strict;
 use bignum;
 use Getopt::Long;
 use Digest::SHA;
-use Crypt::Cipher::AES;
+##use Crypt::Cipher::AES;
 use Time::HiRes      qw( time );
 use List::Util       qw( min max );
 use List::MoreUtils  qw( first_index );
@@ -58,6 +58,8 @@ my %all_commands = (
     'bg-decrypt'      => { 'handler' => \&cmd_bg_decrypt,      'usage' => "{P Q N} H T X C\nDecrypt " },
     'bg-encrypt'      => { 'handler' => \&cmd_bg_encrypt,      'usage' => "{N} MSG\nEncrypt MSG with Blum-Goldwasser key N" },
     'bg-gen'          => { 'handler' => \&cmd_bg_gen,          'usage' => "BITS\nGenerate Blum-Goldwasser key. public=N, private=P,Q" },
+    'book-decrypt'    => { 'handler' => \&cmd_book_crypt,      'usage' => "BOOK STRING\nDecrypt STRING with book cipher using BOOK" },
+    'book-encrypt'    => { 'handler' => \&cmd_book_crypt,      'usage' => "BOOK STRING\nEncrypt STRING with book cipher using BOOK" },
     'break'           => { 'handler' => \&cmd_break,           'usage' => "\nExit while loop.", 'ifctl' => 1 },
     'caesar-decrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher." },
     'caesar-encrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher." },
@@ -125,6 +127,7 @@ my %all_commands = (
     'ss-decrypt'      => { 'handler' => \&cmd_ss_decrypt,      'usage' => "[N PQ D] MSG" },
     'ss-encrypt'      => { 'handler' => \&cmd_ss_encrypt,      'usage' => "[N] MSG" },
     'ss-gen'          => { 'handler' => \&cmd_ss_gen,          'usage' => "BITS\nGenerate Schmidt-Samoa key. public=N, private=PQ,D" },
+    'test-prime'      => { 'handler' => \&cmd_test_prime,      'usage' => "N [REPEAT]" },
     'var'             => { 'handler' => \&cmd_var,             'usage' => "\nPrint all variables" },
     'verhoeff'        => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN\nRun Verhoeff algorithm on credit card number. -g = generate check digit." },
     'vig-decrypt'     => { 'handler' => \&cmd_vig_crypt,       'usage' => "KEY_STR MSG_STR [ALPHABET]\nDecrypt msg with Vigenere." },
@@ -465,6 +468,7 @@ sub command_run {
             while ($repeat-- > 0) {
                 my @cmd_args = @$args[($argi-1) .. (@$args-1)];
                 my $ret = eval { &$handler(@cmd_args); }; # run the cmd
+                save_value('?', $ret);
                 return 0 if not $ret and $quit_on_error;
             }
             astat_done($start_time) if $opt{perf};
@@ -558,7 +562,7 @@ sub expand_vars {
     my @rargs;
     for (my $i = 0; $i < @$args; ++$i) {
         my $arg = $$args[$i];
-        while ($arg =~ /^([^\$]*) \$ ([({]?) (\w+) ([)}]?) (.*)$/x) {
+        while ($arg =~ /^([^\$]*) \$ ([({]?) ([\w?]+) ([)}]?) (.*)$/x) {
             my $v = $saved{$3};
             $v = '?' if not defined $v;
             $arg = $1 . $v . $5;
@@ -636,6 +640,17 @@ sub cmd_bg_decrypt {
 }
 
 # -----------------------------------------------------------------
+sub cmd_book_crypt {
+    my ($cmd, $book, $str) = @_;
+    return usage($cmd) if not defined $str or not defined $book;
+    my $encrypt = ($cmd =~ /encrypt/);
+    $str = book_crypt($encrypt, $book, $str);
+    return cmd_fail($cmd) if not defined $str;
+    print $str, "\n";
+    return 1;
+}
+
+# -----------------------------------------------------------------
 sub cmd_caesar_crypt {
     my ($cmd, $shift, $str, $alphabet) = @_;
     return usage($cmd) if not defined $str;
@@ -654,14 +669,14 @@ sub cmd_ccn {
     return usage($cmd) if not defined $ccn;
     my $ch = ($cmd eq 'luhn') ? luhn($ccn, $gen) : verhoeff($ccn, $gen);
     if (not defined $ch) {
-        print "INVALID DIGIT\n";
+        qprint("INVALID DIGIT\n");
         return 0;
     } elsif ($gen) {
         print $ccn, chr(ord('0')+$ch), "\n";
     } elsif ($ch == 0) {
-        print "ok\n";
+        qprint("ok\n");
     } else {
-        print "INVALID CHECK\n";
+        qprint("INVALID CHECK\n");
         return 0;
     }
     return 1;
@@ -817,7 +832,7 @@ sub cmd_is_prime {
     my ($cmd, $num) = args(\@_);
     return usage($cmd) if not $num;
     my $is_prime = is_prime($num);
-    print $is_prime ? "probably prime\n" : "composite\n";
+    qprint($is_prime ? "probably prime\n" : "composite\n");
     save_value('1', $is_prime);
     return 1;
 }
@@ -899,7 +914,7 @@ sub cmd_option_var {
     my ($var) = @_;
     # var may be 'name', '-name', '!name', '+name', '?name', 'name=value'.
     my $set = undef;
-    if ($var =~ /^ ([?!+-]) ([\w-]*) $/x) { # ?name or !name or +name or -name
+    if ($var =~ /^ ([?!\+\-]) ([\w-]*) $/x) { # ?name or !name or +name or -name
         $var = $2;
         $set = ($1 eq '?') ? -1 : ($1 eq '+') ? 1 : 0;
     } elsif ($var =~ /^ ([^=]+) = "([^"]*)" \s*$ /x) { # name="value"
@@ -939,7 +954,7 @@ sub cmd_option_var {
         return 0;
     }
     $opt{$var} = $value;
-    print_option($var);
+    print_option($var) unless $opt{quiet};
     return 1;
 }
 
@@ -1330,6 +1345,33 @@ sub cmd_vig_crypt {
     return cmd_fail($cmd) if not defined $str;
     print $str, "\n";
     return 1;
+}
+
+# -----------------------------------------------------------------
+sub cmd_test_prime {
+    my ($cmd, $p, $count) = args(\@_, 'p', 'count');
+    return usage($cmd) if not defined $p;
+    my $errs = 0;
+    my $last = 0;
+    my $interval = 1; # seconds
+    my $is_prime = is_prime($p);
+    print $is_prime ? "Test prime $p:\n" : "Test composite $p\n";
+    if (not $count) { $count = $is_prime ? 100 : 10000; }
+    for (my $c = 0; $c < $count; ++$c) {
+        my $now = time();
+        if ($last + $interval < $now || $c+1 == $count) {
+            printf "\r%13d  %3d%% ", $c, (100 * $c) / $count;
+            $last = $now;
+        }
+        my $r = is_prime($p);
+        if ($is_prime >= 0 && $r != $is_prime) {
+            print "\r\n disagreement at #$c: $r!=$is_prime\n";
+            ++$errs;
+        }
+        $is_prime = $r;
+    }
+    print "\r$errs errors in $count tests      \n";
+    return not $errs;
 }
 
 # -----------------------------------------------------------------
@@ -1824,6 +1866,74 @@ sub bg_crypt($$$$$) {
 }
 
 # -----------------------------------------------------------------
+sub book_crypt($$) {
+    my ($encrypt, $book, $str) = @_;
+    my $rstr = '';
+    my $pbook = book_parse($book, $encrypt);
+    return undef if not defined $pbook;
+    foreach my $word (split /\s/, $str) {
+        $rstr .= ' ' if $rstr;
+        $rstr .= $encrypt ? 
+            book_encrypt_word($pbook, $word) : 
+            book_decrypt_word($pbook, $word);
+    }
+    return $rstr;
+}
+
+sub book_parse($$) {
+    my ($book, $encrypt) = @_;
+    my $fb;
+    if (not open($fb, '<', $book)) {
+        print "ERROR: cannot open $book: $!\n";
+        return undef;
+    }
+    my %pbook;
+    my @pbook;
+    my $line = 0;
+    my $page = 0;
+    my $lines_per_page = 50;
+    while (<$fb>) {
+        chomp;
+        $_ = lc($_);
+        s/[^a-z]/ /g;
+        my $wordx = 0;
+        foreach my $word (split /\s+/, $_) {
+            if ($encrypt) {
+                $pbook{$word} = [] if not $pbook{$word};
+                my $r = sprintf "%03d%02d%02d", $page, $line, $wordx;
+                push @{$pbook{$word}}, $r;
+                ++$wordx;
+            } else {
+                $pbook[$page] = [] if not $pbook[$page];
+                ${$pbook[$page]}[$line] = [] if not ${$pbook[$page]}[$line];
+                push @{${$pbook[$page]}[$line]}, $word;
+            }
+        }
+        if (++$line == $lines_per_page) {
+            ++$page;
+            $line = 0;
+        }
+    }
+    close $fb;
+    return $encrypt ? \%pbook : \@pbook;
+}
+
+sub book_encrypt_word($$) {
+    my ($pbook, $word) = @_;
+    my $words = $$pbook{$word};
+    return "?$word" if not $words; # FIXME use letters
+    my $w = int rand scalar @$words;
+    return ${$words}[$w];
+}
+
+sub book_decrypt_word($$) {
+    my ($pbook, $word) = @_;
+    if ($word =~ /^\?(.*)$/) { return $1; }
+    my ($page, $line, $wordx) = $word =~ /^(...)(..)(..)$/;
+    return ${${$$pbook[$page]}[$line]}[$wordx];
+}
+
+# -----------------------------------------------------------------
 sub caesar_crypt($$$) {
     my ($shift, $str, $encrypt, $alphabet) = @_;
     my $alphabet = expand_alphabet($alphabet);
@@ -2068,12 +2178,12 @@ sub sol_movex($$$) {
     my ($deck, $index, $moves) = @_;
     my $new_index;
     if ($index + $moves >= sol_cards()) { # wrap to start of deck
-        my @card = splice $deck, $index, 1;
+        my @card = splice @$deck, $index, 1;
         $new_index = $index + $moves - sol_cards() + 1;
-        splice $deck, $new_index, 0, @card;
+        splice @$deck, $new_index, 0, @card;
     } else {
         $new_index = $index + $moves;
-        splice $deck, $index, $moves+1, @$deck[$index+1 .. $index+$moves], $$deck[$index];
+        splice @$deck, $index, $moves+1, @$deck[$index+1 .. $index+$moves], $$deck[$index];
     }
     return $new_index;
 }
@@ -2084,16 +2194,16 @@ sub sol_triple_cut($) {
     my $j1 = first_index { $_ == $jokerA } @$deck;
     my $j2 = first_index { $_ == $jokerB } @$deck;
     ($j1,$j2) = ($j2,$j1) if $j1 > $j2;
-    my @tail = splice $deck, $j2+1; # remove tail
-    my @head = splice $deck, 0, $j1, @tail; # replace head with tail
-    push $deck, @head; # append head
+    my @tail = splice @$deck, $j2+1; # remove tail
+    my @head = splice @$deck, 0, $j1, @tail; # replace head with tail
+    push @$deck, @head; # append head
 }
 
 # -----------------------------------------------------------------
 sub sol_count_cut($$) {
     my ($deck, $count) = @_;
-    my @cards = splice $deck, 0, min($count, sol_cards()-1);
-    splice $deck, -1, 0, @cards;
+    my @cards = splice @$deck, 0, min($count, sol_cards()-1);
+    splice @$deck, -1, 0, @cards;
 }
 
 # -----------------------------------------------------------------
@@ -2547,18 +2657,7 @@ sub quick_sort(@) {
 sub quick_sort_range($$$) {
     my ($arr, $lo, $hi, $pivot_type) = @_;
     return if $lo >= $hi; # 0 or 1 elements are already sorted
-    my $pivot;
-    if ($pivot_type == 1) {
-        $pivot = $$arr[$lo];
-    } elsif ($pivot_type == 2) {
-        $pivot = $$arr[$hi];
-    } elsif ($pivot_type == 3) {
-        $pivot = $$arr[int(($hi+$lo)/2)];
-    } elsif ($pivot_type == 4) {
-        my ($p1,$p2,$p3) = sort3($$arr[$lo], $$arr[$hi], $$arr[int(($hi+$lo)/2)]);
-        $pivot = $p2;
-    } else { die; }
-
+    my $pivot = quick_sort_pivot($arr, $lo, $hi, $pivot_type);
     my $plo = $lo-1;
     my $phi = $hi+1;
     for (;;) {
@@ -2571,6 +2670,24 @@ sub quick_sort_range($$$) {
     die if $phi >= $hi;
     quick_sort_range($arr, $lo, $phi, $pivot_type);
     quick_sort_range($arr, $phi+1, $hi, $pivot_type);
+}
+
+sub quick_sort_pivot($$$) {
+    my ($arr, $lo, $hi, $pivot_type) = @_;
+    if ($pivot_type == 1) {
+        return $$arr[$lo];
+    }
+    if ($pivot_type == 2) {
+        return $$arr[$hi];
+    }
+    if ($pivot_type == 3) {
+        return $$arr[int(($hi+$lo)/2)];
+    }
+    if ($pivot_type == 4) {
+        my ($p1,$p2,$p3) = sort3($$arr[$lo], $$arr[$hi], $$arr[int(($hi+$lo)/2)]);
+        return $p2;
+    }
+    die;
 }
 
 # -----------------------------------------------------------------
@@ -2672,7 +2789,9 @@ sub random($$) {
     return $min if $min >= $max;
     my $m = $max - $min + 1;
     my $bytes = number_bytes($m);
-    my $rmax = idiv(lshift(1,8*$bytes), $m) * $m;
+    my $bits = 8 * $bytes;
+    my $imax = lshift(1,$bits);
+    my $rmax = idiv($imax, $m) * $m;
     for (;;) {
         my $rand = $rng->{get}($rng, $bytes);
         return undef if not defined $rand;
@@ -2740,7 +2859,6 @@ sub lfsr_rng_init($$) {
 sub lfsr_rng_get_bit($) {
     my ($lfsr) = @_;
     my $state = $lfsr->{state};
-    my $nstate = $state << 1;
     my $new_bit = 0;
     for (my $bit = 0; $bit < $lfsr->{bits}; ++$bit) {
         if ($lfsr->{poly} & (1 << $bit)) {
@@ -2748,7 +2866,7 @@ sub lfsr_rng_get_bit($) {
         }
     }
     $new_bit &= 1;
-    $lfsr->{state} = $nstate | $new_bit;
+    $lfsr->{state} = ($state << 1) | $new_bit;
     return $new_bit;
 }
 
@@ -2920,6 +3038,7 @@ sub fort_rng_init($$) {
     for (my $i = 0; $i < $num_pools; ++$i) {
         push @pool, { digest => new Digest::SHA($sha_bits), bytes => 0 }; 
     }
+    eval "reqire Crypt::Cipher::AES";
     my $fort = { 'get' => \&fort_rng_get_bytes, 'set_seed' => \&fort_rng_seed,
         'key' => '', 'ctr' => 1, 'rekey_ctr' => 0, 'sha_bits' => $sha_bits,
         'key_size' => Crypt::Cipher::AES::keysize(), 
@@ -2977,6 +3096,7 @@ sub fort_rng_seed($$) {
     $poolx = 0 if ++$poolx >= @{$fort->{pool}}; # round robin
     ${$fort->{pool_ptr}}[$src] = $poolx;
     return 1;
+
 }
 
 # Set key with entropy from some of the pools.
@@ -3001,6 +3121,7 @@ sub fort_rng_rekey {
 
 sub fort_rng_setkey($$) {
     my ($fort, $key) = @_;
+    ##? eval "reqire Crypt::Cipher::AES";
     print "fort: set key ",length($key)," bytes\n" if $opt{verbose};
     die "key too small" if length($key) < $fort->{key_size};
     $fort->{key} = substr($key, 0, $fort->{key_size});
@@ -3206,9 +3327,10 @@ sub is_even($) {
 sub lshift($$) {
     my ($n, $shift) = @_;
     ++$astat_shift;
-    $n = $n+0;
-    $n->blsft($shift);
-    return $n;
+    $shift = int(sprintf("%d",$shift)); ## WTF
+    my $n0 = $n+0;
+    $n0->blsft($shift);
+    return $n0;
 }
 
 # -----------------------------------------------------------------
@@ -3469,3 +3591,4 @@ sub sort_stat {
     $sort_stats{$key} = 0 if not $sort_stats{$key};
     $sort_stats{$key} += $incr;
 }
+
