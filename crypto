@@ -18,7 +18,7 @@ my $rng_bits_default    = 32;
 my $mr_loops_default    = 8;
 my $rabin_shift_default = 8;
 my $qs_pivot_default    = 'mid';
-my $para_space          = 5;
+my $para_space          = '     ';
 
 my %set_alias = ( 'on' => 1, 'off' => 0 );
 my %pivot_alias = ( 'lo' => 1, 'hi' => 2, 'mid' => 3, 'med3' => 4 );
@@ -219,13 +219,12 @@ sub usage_intro {
 
 # -----------------------------------------------------------------
 sub usage_outro {
-    my $sp = ' ' x $para_space;
     print "VAR=STRING\n";
-    print $sp, "Set variable to literal string\n";
+    print $para_space, "Set variable to literal string\n";
     print "VAR:=EXPR\n";
-    print $sp, "Set variable to evaluation of expression\n";
+    print $para_space, "Set variable to evaluation of expression\n";
     print "\@[ ]FILENAME\n";
-    print $sp, "Execute commands from a file\n";
+    print $para_space, "Execute commands from a file\n";
 }
 
 # -----------------------------------------------------------------
@@ -238,11 +237,7 @@ sub usage_cmd($$$) {
         my $handler = $$command{handler};
         my $usage = $$command{usage};
         my $maxlines = $qsum ? 1 : 9999999;
-        if (substr($usage,0,1) eq '@') {
-            print_para(substr($usage,1), $maxlines);
-        } else {
-            print_para("$cmd $usage", $maxlines);
-        }
+        print_para("$cmd $usage", $maxlines);
         usage_options(0) if $cmd eq 'option' and not $opts_prt;
     }
 }
@@ -258,10 +253,9 @@ sub print_para($$) {
 ##  }
     my $lines = 0;
     foreach my $line (split /\n/, $str) {
-        print ' ' x $para_space if $lines > 0;
+        print $para_space if $lines > 0;
         print $line, "\n";
-        ++$lines;
-        last if $lines >= $maxlines;
+        last if ++$lines >= $maxlines;
     }
 }
 
