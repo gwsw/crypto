@@ -124,8 +124,8 @@ my %all_commands = (
     'sol4-decrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => $sol_usage },
     'sol4-encrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => $sol_usage },
     'sort'            => { 'handler' => \&cmd_sort,            'usage' => "-[iImq] NUM...\nSort numbers. -i=insertions, -I=insertion+binary, -m=merge, -q=quicksort." },
-    'ss-decrypt'      => { 'handler' => \&cmd_ss_decrypt,      'usage' => "[N PQ D] MSG" },
-    'ss-encrypt'      => { 'handler' => \&cmd_ss_encrypt,      'usage' => "[N] MSG" },
+    'ss-decrypt'      => { 'handler' => \&cmd_ss_decrypt,      'usage' => "[N PQ D] MSG\nDecrypt integer cyphertext with Schmidt-Samoa" },
+    'ss-encrypt'      => { 'handler' => \&cmd_ss_encrypt,      'usage' => "[N] MSG\nEncrypt integer message with Schmidt-Samoa" },
     'ss-gen'          => { 'handler' => \&cmd_ss_gen,          'usage' => "BITS\nGenerate Schmidt-Samoa key. public=N, private=PQ,D" },
     'test-prime'      => { 'handler' => \&cmd_test_prime,      'usage' => "N [REPEAT]" },
     'var'             => { 'handler' => \&cmd_var,             'usage' => "\nPrint all variables" },
@@ -211,9 +211,9 @@ sub usage1 {
 
 # -----------------------------------------------------------------
 sub usage_intro {
-    print " A command may be prefixed with \"NUM* \" to repeat.\n";
     print " Multiple commands may appear in one line separated by semicolons, dots or ampersands.\n";
     print " Semicolon and dot mean the same. Ampersand sets quit-on-error.\n";
+    print " A command may be prefixed with \"NUM* \" to repeat.\n";
     print " Vars are accessed as \$VAR. Printed output values are \$1, \$2, etc.\n";
 }
 
