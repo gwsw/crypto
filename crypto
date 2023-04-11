@@ -86,13 +86,13 @@ my %all_commands = (
     'kx'              => { 'handler' => \&cmd_kx,              'usage' => "BITS\nRun example Diffie-Hellman key exchange." },
     'lcm'             => { 'handler' => \&cmd_lcm,             'usage' => "NUM1 NUM2\nPrint Least Common Multiple of NUM1 and NUM2." },
     'luhn'            => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN\nRun Luhn algorithm on credit card number. -g = generate check digit." },
-    'mh-decrypt'      => { 'handler' => \&cmd_mh_decrypt,      'usage' => "[B W Q R] MSG\nDecrypt MSG using Merkle-Hellman knapsack." },
-    'mh-encrypt'      => { 'handler' => \&cmd_mh_encrypt,      'usage' => "[B] MSG\nEncrypt MSG using Merkle-Hellman knapsack." },
+    'mh-decrypt'      => { 'handler' => \&cmd_mh_decrypt,      'usage' => "{B W Q R} MSG\nDecrypt MSG using Merkle-Hellman knapsack." },
+    'mh-encrypt'      => { 'handler' => \&cmd_mh_encrypt,      'usage' => "{B} MSG\nEncrypt MSG using Merkle-Hellman knapsack." },
     'mh-gen'          => { 'handler' => \&cmd_mh_gen,          'usage' => "BITS BLK\nGenerate key for Merkle-Hellman knapsack.\nBLK is number of blocks." },
     'mul'             => { 'handler' => \&cmd_mul,             'usage' => "N1 N2 [MOD]\nCompute (N1 * N2) % MOD, or just N1 * N2 if MOD is missing." },
     'option'          => { 'handler' => \&cmd_option,          'usage' => "[+!?-]OPTION[=VALUE]..." },
-    'ou-decrypt'      => { 'handler' => \&cmd_ou_decrypt,      'usage' => "[N G H P Q] MSG" },
-    'ou-encrypt'      => { 'handler' => \&cmd_ou_encrypt,      'usage' => "[N G H] MSG" },
+    'ou-decrypt'      => { 'handler' => \&cmd_ou_decrypt,      'usage' => "{N G H P Q} MSG" },
+    'ou-encrypt'      => { 'handler' => \&cmd_ou_encrypt,      'usage' => "{N G H} MSG" },
     'ou-gen'          => { 'handler' => \&cmd_ou_gen,          'usage' => "BITS" },
     'pow'             => { 'handler' => \&cmd_pow,             'usage' => "BASE EXP MOD\nReturn (BASE ^ EXP) % MOD" },
     'rabbit-decrypt'  => { 'handler' => \&cmd_rabbit_crypt,    'usage' => "" },
@@ -124,8 +124,8 @@ my %all_commands = (
     'sol4-decrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => $sol_usage },
     'sol4-encrypt'    => { 'handler' => \&cmd_sol4_crypt,      'usage' => $sol_usage },
     'sort'            => { 'handler' => \&cmd_sort,            'usage' => "-[iImq] NUM...\nSort numbers. -i=insertions, -I=insertion+binary, -m=merge, -q=quicksort." },
-    'ss-decrypt'      => { 'handler' => \&cmd_ss_decrypt,      'usage' => "[N PQ D] MSG\nDecrypt integer cyphertext with Schmidt-Samoa" },
-    'ss-encrypt'      => { 'handler' => \&cmd_ss_encrypt,      'usage' => "[N] MSG\nEncrypt integer message with Schmidt-Samoa" },
+    'ss-decrypt'      => { 'handler' => \&cmd_ss_decrypt,      'usage' => "{N PQ D} MSG\nDecrypt integer cyphertext with Schmidt-Samoa" },
+    'ss-encrypt'      => { 'handler' => \&cmd_ss_encrypt,      'usage' => "{N} MSG\nEncrypt integer message with Schmidt-Samoa" },
     'ss-gen'          => { 'handler' => \&cmd_ss_gen,          'usage' => "BITS\nGenerate Schmidt-Samoa key. public=N, private=PQ,D" },
     'test-prime'      => { 'handler' => \&cmd_test_prime,      'usage' => "N [REPEAT]" },
     'var'             => { 'handler' => \&cmd_var,             'usage' => "\nPrint all variables" },
@@ -1737,6 +1737,7 @@ sub rc4_keyexpand($) {
 
 # -----------------------------------------------------------------
 # ---- Schmidt-Samoa
+# #### NOT WORKING ####
 # -----------------------------------------------------------------
 
 # -----------------------------------------------------------------
@@ -1762,7 +1763,7 @@ sub ss_encrypt($$) {
 sub ss_decrypt($$$$) {
     my ($n, $pq, $d, $enc) = @_;
     return undef if msg_too_large($enc, $n);
-    ### return pow_mod($enc, $d, $pq); #### no, need CRT?
+    return pow_mod($enc, $d, $pq); #### no, need CRT?
 }
 
 # -----------------------------------------------------------------
