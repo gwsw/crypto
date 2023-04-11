@@ -55,14 +55,14 @@ my %all_options = (
 my $sol_usage = "[-k KEY | SHUFFLE] MSG\nEncrypt alpha string by Solitaire. KEY=alpha-string, SHUFFLE=perm(1..54).";
 
 my %all_commands = (
-    'bg-decrypt'      => { 'handler' => \&cmd_bg_decrypt,      'usage' => "{P Q N} H T X C\nDecrypt " },
-    'bg-encrypt'      => { 'handler' => \&cmd_bg_encrypt,      'usage' => "{N} MSG\nEncrypt MSG with Blum-Goldwasser key N" },
+    'bg-decrypt'      => { 'handler' => \&cmd_bg_decrypt,      'usage' => "{P Q N} H T X C\nDecrypt MSG with Blum-Goldwasser." },
+    'bg-encrypt'      => { 'handler' => \&cmd_bg_encrypt,      'usage' => "{N} MSG\nEncrypt MSG with Blum-Goldwasser." },
     'bg-gen'          => { 'handler' => \&cmd_bg_gen,          'usage' => "BITS\nGenerate Blum-Goldwasser key. public=N, private=P,Q" },
     'book-decrypt'    => { 'handler' => \&cmd_book_crypt,      'usage' => "BOOK STRING\nDecrypt STRING with book cipher using BOOK" },
     'book-encrypt'    => { 'handler' => \&cmd_book_crypt,      'usage' => "BOOK STRING\nEncrypt STRING with book cipher using BOOK" },
     'break'           => { 'handler' => \&cmd_break,           'usage' => "\nExit while loop.", 'ifctl' => 1 },
-    'caesar-decrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher." },
-    'caesar-encrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher." },
+    'caesar-decrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nDecrypt STRING encoded with a SHIFT-shift Caesar cipher.\nALPHABET may contain [x-y] for all chars between x and y inclusive." },
+    'caesar-encrypt'  => { 'handler' => \&cmd_caesar_crypt,    'usage' => "SHIFT STRING [ALPHABET]\nEncrypt STRING with a SHIFT-shift Caesar cipher.\nALPHABET may contain [x-y] for all chars between x and y inclusive." },
     'cs-decrypt'      => { 'handler' => \&cmd_cs_decrypt,      'usage' => "[P Q QBITS G1 G2 C D H] MSG" },
     'cs-encrypt'      => { 'handler' => \&cmd_cs_encrypt,      'usage' => "[P X1 X2 Y1 Y2 Z] U1 U2 E V" },
     'cs-gen'          => { 'handler' => \&cmd_cs_gen,          'usage' => "BITS\Generate nCramer-Shoup key" },
@@ -82,13 +82,13 @@ my %all_commands = (
     'history'         => { 'handler' => \&cmd_history,         'usage' => "[NUM]" },
     'if'              => { 'handler' => \&cmd_if,              'usage' => "cond", 'ifctl' => 1 },
     'inv'             => { 'handler' => \&cmd_inv,             'usage' => "NUM MOD\nReturn modular multiplicative inverse [ie. (NUM*$1) % MOD = 1 ]" },
-    'is-prime'        => { 'handler' => \&cmd_is_prime,        'usage' => "NUM" },
-    'kx'              => { 'handler' => \&cmd_kx,              'usage' => "BITSRun example Diffie-Hellman key exchange." },
-    'lcm'             => { 'handler' => \&cmd_lcm,             'usage' => "NUM1 NUM2" },
+    'is-prime'        => { 'handler' => \&cmd_is_prime,        'usage' => "NUM\nUse Miller-Rabin test to determine if a number is (probably) prime." },
+    'kx'              => { 'handler' => \&cmd_kx,              'usage' => "BITS\nRun example Diffie-Hellman key exchange." },
+    'lcm'             => { 'handler' => \&cmd_lcm,             'usage' => "NUM1 NUM2\nPrint Least Common Multiple of NUM1 and NUM2." },
     'luhn'            => { 'handler' => \&cmd_ccn,             'usage' => "[-g] CCN\nRun Luhn algorithm on credit card number. -g = generate check digit." },
-    'mh-decrypt'      => { 'handler' => \&cmd_mh_decrypt,      'usage' => "[B W Q R] MSG" },
-    'mh-encrypt'      => { 'handler' => \&cmd_mh_encrypt,      'usage' => "[B] MSG" },
-    'mh-gen'          => { 'handler' => \&cmd_mh_gen,          'usage' => "BITS BLK" },
+    'mh-decrypt'      => { 'handler' => \&cmd_mh_decrypt,      'usage' => "[B W Q R] MSG\nDecrypt MSG using Merkle-Hellman knapsack." },
+    'mh-encrypt'      => { 'handler' => \&cmd_mh_encrypt,      'usage' => "[B] MSG\nEncrypt MSG using Merkle-Hellman knapsack." },
+    'mh-gen'          => { 'handler' => \&cmd_mh_gen,          'usage' => "BITS BLK\nGenerate key for Merkle-Hellman knapsack.\nBLK is number of blocks." },
     'mul'             => { 'handler' => \&cmd_mul,             'usage' => "N1 N2 [MOD]\nCompute (N1 * N2) % MOD, or just N1 * N2 if MOD is missing." },
     'option'          => { 'handler' => \&cmd_option,          'usage' => "[+!?-]OPTION[=VALUE]..." },
     'ou-decrypt'      => { 'handler' => \&cmd_ou_decrypt,      'usage' => "[N G H P Q] MSG" },
@@ -102,9 +102,9 @@ my %all_commands = (
     'rabin-gen'       => { 'handler' => \&cmd_rabin_gen,       'usage' => "BITS [SIGN_NONCE_BITS]" },
     'rabin-sign'      => { 'handler' => \&cmd_rabin_sign,      'usage' => "{P Q N BITS SIGN_NONCE_BITS} MSG" },
     'rabin-verify'    => { 'handler' => \&cmd_rabin_verify,    'usage' => "{N BITS} U X MSG" },
-    'random'          => { 'handler' => \&cmd_random,          'usage' => "[MIN] MAX" },
-    'random-bytes'    => { 'handler' => \&cmd_random_bytes,    'usage' => "BYTES" },
-    'random-string'   => { 'handler' => \&cmd_random_string,   'usage' => "CHARS ALPHABET" },
+    'random'          => { 'handler' => \&cmd_random,          'usage' => "[MIN] MAX\nReturn a random number between MIN and MAX, inclusive.\nMIN defaults to 0." },
+    'random-bytes'    => { 'handler' => \&cmd_random_bytes,    'usage' => "BYTES\nPrint BYTES random bytes." },
+    'random-string'   => { 'handler' => \&cmd_random_string,   'usage' => "CHARS [ALPHABET]\nPrint a random string of length CHARS, taken from the given alphabet (default 26 uppercase).\nALPHABET may contain [x-y] for all chars between x and y inclusive." },
     'rc4-decrypt'     => { 'handler' => \&cmd_rc4_crypt,       'usage' => "KEY MSG" },
     'rc4-encrypt'     => { 'handler' => \&cmd_rc4_crypt,       'usage' => "KEY MSG" },
     'rc4-key'         => { 'handler' => \&cmd_rc4_key,         'usage' => "KEY BYTES" },
@@ -1096,17 +1096,9 @@ sub cmd_random_bytes {
 # -----------------------------------------------------------------
 sub cmd_random_string {
     my ($cmd, $chars, $alpha) = @_;
-    return usage($cmd) if not $alpha;
+    return usage($cmd) if not $chars;
     # Expand dashes "a-h" => "abcdefgh" etc.
-    my $dash;
-    while (($dash = index($alpha, '-')) > 0 and $dash+1 < length $alpha) {
-        my $pch = ord substr $alpha, $dash-1, 1;
-        my $nch = ord substr $alpha, $dash+1, 1;
-        my $a = substr($alpha, 0, $dash);
-        while ($pch < $nch) { $a .= chr(++$pch); }
-        $a .= substr($alpha, $dash+2);
-        $alpha = $a;
-    }
+    $alpha = expand_alphabet($alpha);
     my $str = '';
     for (my $i = 0; $i < $chars; ++$i) {
         my $r = random(0, length($alpha)-1);
