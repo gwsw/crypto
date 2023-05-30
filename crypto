@@ -310,7 +310,9 @@ sub main {
 # Interactive mode.
 sub command_interactive {
     my $term;
-    if (eval "require Term::ReadLine::Tiny") {
+    if (eval "require Term::ReadLine") {
+        $term = new Term::ReadLine('crypto');
+    } elsif (eval "require Term::ReadLine::Tiny") {
         $term = new Term::ReadLine::Tiny;
     }
     for (;;) {
