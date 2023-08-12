@@ -3317,7 +3317,7 @@ sub lshift($$) {
     my ($n, $shift) = @_;
     ++$astat_shift;
     $shift = int(sprintf("%d",$shift)); ## WTF
-    my $n0 = $n+0;
+    my $n0 = Math::BigInt->new($n);
     $n0->blsft($shift);
     return $n0;
 }
@@ -3326,9 +3326,9 @@ sub lshift($$) {
 sub rshift($$) {
     my ($n, $shift) = @_;
     ++$astat_shift;
-    $n = $n+0;
+    $n = Math::BigInt->new($n);
     $n->brsft($shift);
-    return $n;
+    return ($n);
 }
 
 # -----------------------------------------------------------------
@@ -3479,9 +3479,9 @@ sub bytes_from_hex($) {
 # Return BigInt representation.
 sub i($) {
     my ($s) = @_;
-    return $1+0    if $s =~ /^-?0d(\d+)$/; # force to a BigInt
+    return Math::BigInt->new($1)    if $s =~ /^-?0d(\d+)$/; # force to a BigInt
     return hex($s) if $s =~ /^0x/i or $opt{hex};
-    return $s+0    if $s =~ /^-?\d+$/; # force to a BigInt
+    return Math::BigInt->new($s)    if $s =~ /^-?\d+$/; # force to a BigInt
     return undef;
 }
 
