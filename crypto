@@ -66,7 +66,7 @@ my %all_commands = (
     'cs-decrypt'      => { 'handler' => \&cmd_cs_decrypt,      'usage' => "[P Q QBITS G1 G2 C D H] MSG" },
     'cs-encrypt'      => { 'handler' => \&cmd_cs_encrypt,      'usage' => "[P X1 X2 Y1 Y2 Z] U1 U2 E V" },
     'cs-gen'          => { 'handler' => \&cmd_cs_gen,          'usage' => "BITS\Generate nCramer-Shoup key" },
-    'echo'            => { 'handler' => \&cmd_echo,            'usage' => "[STRING...\nPrint arguments." },
+    'echo'            => { 'handler' => \&cmd_echo,            'usage' => "[STRING]...\nPrint arguments." },
     'eg-decrypt'      => { 'handler' => \&cmd_eg_decrypt,      'usage' => "{P G X} R S\nDecrypt message with (private) ElGamal key." },
     'eg-encrypt'      => { 'handler' => \&cmd_eg_encrypt,      'usage' => "{P G Y} MSG\nEncrypt MSG with (public) ElGamal key." },
     'eg-gen'          => { 'handler' => \&cmd_eg_gen,          'usage' => "BITS\nGenerate ElGamal key. public=P,G,Y; private=X" },
@@ -94,7 +94,7 @@ my %all_commands = (
     'ou-decrypt'      => { 'handler' => \&cmd_ou_decrypt,      'usage' => "{N G H P Q} MSG" },
     'ou-encrypt'      => { 'handler' => \&cmd_ou_encrypt,      'usage' => "{N G H} MSG" },
     'ou-gen'          => { 'handler' => \&cmd_ou_gen,          'usage' => "BITS" },
-    'pow'             => { 'handler' => \&cmd_pow,             'usage' => "BASE EXP MOD\nReturn (BASE ^ EXP) % MOD" },
+    'pow'             => { 'handler' => \&cmd_pow,             'usage' => "BASE EXP [MOD]\nReturn (BASE ^ EXP) % MOD" },
     'rabbit-decrypt'  => { 'handler' => \&cmd_rabbit_crypt,    'usage' => "" },
     'rabbit-encrypt'  => { 'handler' => \&cmd_rabbit_crypt,    'usage' => "" },
     'rabin-decrypt'   => { 'handler' => \&cmd_rabin_decrypt,   'usage' => "{P Q N} MSG" },
@@ -988,8 +988,8 @@ sub cmd_ou_decrypt {
 # -----------------------------------------------------------------
 sub cmd_pow {
     my ($cmd, $base, $exp, $mod) = args(\@_);
-    return usage($cmd) if not $mod;
-    my $n = pow_mod($base, $exp, $mod);
+    return usage($cmd) if not $exp;
+    my $n = $mod ? pow_mod($base, $exp, $mod) : $base ** $exp;
     print_values($n);
     return 1;
 }
