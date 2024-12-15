@@ -3,7 +3,7 @@
 # Sample code for cryptographic operations.
 
 use strict;
-use bignum;
+use bigint;
 use Getopt::Long;
 use Digest::SHA;
 ##use Crypt::Cipher::AES;
